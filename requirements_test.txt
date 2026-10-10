@@ -1,0 +1,4 @@
+# pins a matching homeassistant version
+pytest-homeassistant-custom-component
+# the API library (from this repo until it is on PyPI)
+-e ./pyiotopen

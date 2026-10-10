@@ -1,0 +1,25 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  zip:
+    # HACS can install from this zip (set "zip_release": true + "filename" in hacs.json if wanted)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set version in manifest from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          jq --arg v "$VERSION" '.version = $v' custom_components/iotopen/manifest.json > m.json
+          mv m.json custom_components/iotopen/manifest.json
+      - name: Zip integration
+        run: cd custom_components/iotopen && zip -r ../../iotopen.zip .
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: iotopen.zip

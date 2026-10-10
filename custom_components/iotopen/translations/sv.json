@@ -1,0 +1,143 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Anslut till IoT Open",
+        "description": "Ange din IoT Open-server (Lynx) och välj hur du vill logga in.",
+        "data": {
+          "url": "Server-URL",
+          "auth_method": "Inloggningsmetod"
+        },
+        "data_description": {
+          "url": "Oftast {default_url}",
+          "auth_method": "API-nyckel rekommenderas eftersom den inte går ut."
+        }
+      },
+      "api_key": {
+        "title": "API-nyckel",
+        "description": "Klistra in en API-nyckel (eller token) för {url}.",
+        "data": {
+          "token": "API-nyckel"
+        },
+        "data_description": {
+          "token": "Skickas som X-API-Key. Sparas i Home Assistant."
+        }
+      },
+      "credentials": {
+        "title": "Logga in",
+        "description": "Logga in på {url}. Lösenordet används bara för att hämta en token och sparas inte. En token går ut, och då behöver du logga in igen. Med en API-nyckel slipper du det.",
+        "data": {
+          "username": "E-post / användarnamn",
+          "password": "Lösenord"
+        }
+      },
+      "two_factor": {
+        "title": "Tvåfaktorsautentisering",
+        "description": "Ange koden från din autentiseringsapp.",
+        "data": {
+          "code": "Kod"
+        }
+      },
+      "installations": {
+        "title": "Installationer",
+        "description": "Välj vilka installationer som ska läggas till. Varje funktion blir en entitet.",
+        "data": {
+          "installations": "Installationer",
+          "add_new_installations": "Lägg till nya installationer automatiskt"
+        },
+        "data_description": {
+          "add_new_installations": "Nya installationer söks vid start och en gång i timmen."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Logga in igen",
+        "description": "IoT Open ({url}) godkände inte den sparade API-nyckeln eller token. Välj hur du vill logga in.",
+        "data": {
+          "auth_method": "Inloggningsmetod"
+        }
+      }
+    },
+    "error": {
+      "invalid_url": "Ogiltig URL",
+      "invalid_auth": "Fel inloggningsuppgifter eller API-nyckel",
+      "cannot_connect": "Kan inte ansluta till IoT Open-servern",
+      "unknown": "Oväntat fel",
+      "invalid_code": "Fel eller utgången kod",
+      "no_selection": "Välj minst en installation"
+    },
+    "abort": {
+      "already_configured": "Det här IoT Open-kontot är redan konfigurerat",
+      "reauth_successful": "Inloggningen lyckades",
+      "no_installations": "Kontot har inte tillgång till några installationer",
+      "wrong_account": "Du loggade in med ett annat IoT Open-konto än tidigare"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Installationer",
+        "description": "Välj installationer, vad Home Assistant speglar till IoT Open och vad som importeras. Den här instansen: id {instance_id}.",
+        "data": {
+          "installations": "Installationer",
+          "add_new_installations": "Lägg till nya installationer automatiskt",
+          "export_installation": "Spegla Home Assistant till installation",
+          "export_label": "Etikett som väljer vad som speglas",
+          "export_control": "Låt IoT Open styra Home Assistant",
+          "instance_name": "Den här Home Assistants namn i IoT Open",
+          "import_mode": "Import från IoT Open"
+        },
+        "data_description": {
+          "add_new_installations": "Nya installationer söks vid start och en gång i timmen.",
+          "export_installation": "Entiteter och enheter med etiketten nedan skapas som devices och funktioner i den här IoT Open-installationen (obj/ha/… för status, set/obj/ha/… för styrning).",
+          "export_label": "Sätt den här etiketten på entiteter eller enheter i Home Assistant. Etiketten skapas automatiskt.",
+          "export_control": "Brytare, lampor, lås, rullgardiner, nummer m.m. får topic_write (set/obj/…) som anropar Home Assistant-tjänsten.",
+          "instance_name": "Ange värdet i metanyckeln ha.destination på de devices eller funktioner i IoT Open som ska visas här (det långa instans-id:t {instance_id} fungerar också; * betyder alla instanser).",
+          "import_mode": "Bara märkta: endast devices/funktioner vars ha.destination anger den här instansen. Alla: varje funktion i valda installationer."
+        }
+      }
+    },
+    "error": {
+      "no_selection": "Välj minst en installation"
+    },
+    "abort": {
+      "invalid_auth": "Fel inloggningsuppgifter eller API-nyckel",
+      "cannot_connect": "Kan inte ansluta till IoT Open-servern"
+    }
+  },
+  "selector": {
+    "auth_method": {
+      "options": {
+        "api_key": "API-nyckel (rekommenderas)",
+        "credentials": "Användarnamn och lösenord (stöd för 2FA)"
+      }
+    },
+    "import_mode": {
+      "options": {
+        "tagged": "Bara märkta med ha.destination (rekommenderas)",
+        "all": "Alla funktioner i valda installationer"
+      }
+    }
+  },
+  "config_subentries": {
+    "installation": {
+      "entry_type": "Installation",
+      "initiate_flow": {
+        "user": "Lägg till installation"
+      },
+      "step": {
+        "user": {
+          "title": "Lägg till IoT Open-installation",
+          "description": "Välj en installation att importera från. Med importläget 'Bara märkta' visas bara devices/funktioner med ha.destination för den här instansen.",
+          "data": {
+            "installation_id": "Installation"
+          }
+        }
+      },
+      "abort": {
+        "no_more_installations": "Alla tillgängliga installationer är redan tillagda",
+        "invalid_auth": "Fel inloggningsuppgifter eller API-nyckel",
+        "cannot_connect": "Kan inte ansluta till IoT Open-servern"
+      }
+    }
+  }
+}

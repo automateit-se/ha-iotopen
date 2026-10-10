@@ -1,0 +1,391 @@
+"""Rules for mirroring Home Assistant entities into IoT Open (pure Python, no HA imports).
+
+IoT Open conventions:
+* ``topic_read``  = ``obj/ha/<domain>/<object_id>``      (status, logged by IoT Open)
+* ``topic_write`` = ``set/obj/ha/<domain>/<object_id>``  (control, only for controllable entities)
+* functions/devices created by this integration carry ``ha.source`` = the instance name and
+  ``ha.source_id`` = the stable HA instance id, so the
+  import side can ignore them and the export side knows which objects it owns.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
+META_SOURCE = "ha.source"  # readable instance name, e.g. "home" (follows renames)
+META_SOURCE_ID = "ha.source_id"  # stable HA instance id; decides ownership
+META_ENTITY_ID = "ha.entity_id"
+META_HA_DEVICE_ID = "ha.device_id"
+META_DEVICE_CLASS = "ha.device_class"  # keeps HA's class for types like boolean_text
+META_HA_TYPE = "ha.type"  # the type HA suggested; a different function type means it was changed in IoT Open
+
+DOOR_CLASSES = {"door", "window", "garage_door", "opening"}
+MOVEMENT_CLASSES = {"motion", "occupancy", "presence", "moving"}
+ONOFF_SUFFIX = "onoff"
+
+
+def is_dimmable(attributes: dict[str, Any]) -> bool:
+    """A light that supports more than on/off."""
+    modes = attributes.get("supported_color_modes") or []
+    return any(str(m) != "onoff" for m in modes) or attributes.get("brightness") is not None
+
+TOPIC_PREFIX = "obj/ha"
+WRITE_PREFIX = "set/"
+
+UNAVAILABLE_STATES = {"unavailable", "unknown", "none", ""}
+
+# domains whose state is not a meaningful value (timestamps, firmware info, media ...)
+EXCLUDED_DOMAINS = {
+    "event", "update", "image", "camera", "tts", "stt", "conversation", "notify",
+    "wake_word", "assist_satellite", "ai_task", "todo", "calendar", "media_player", "remote",
+}
+
+
+def is_exportable(entity_id: str) -> bool:
+    """Whether an entity's domain can be mirrored as an IoT Open function."""
+    return entity_id.split(".", 1)[0] not in EXCLUDED_DOMAINS
+
+# on/off style domains: value 1/0, controllable with turn_on/turn_off
+ON_OFF_CONTROL = {"switch", "light", "input_boolean", "fan", "automation", "siren", "humidifier"}
+ON_OFF_READ_ONLY = {"binary_sensor"}
+NUMBER_CONTROL = {"number", "input_number"}
+
+# state -> value for other two-state domains
+_TWO_STATE: dict[str, tuple[dict[str, int], str, str]] = {
+    # domain: (state->value, text_on, text_off)
+    "lock": ({"locked": 1, "unlocked": 0, "locking": 1, "unlocking": 0, "jammed": 0, "open": 0}, "Locked", "Unlocked"),
+    "cover": ({"open": 1, "opening": 1, "closed": 0, "closing": 0}, "Open", "Closed"),
+    "valve": ({"open": 1, "opening": 1, "closed": 0, "closing": 0}, "Open", "Closed"),
+    "person": ({"home": 1, "not_home": 0}, "Home", "Away"),
+}
+TWO_STATE_CONTROL = {"lock", "cover", "valve"}
+
+_SAFE = re.compile(r"[^a-z0-9_]+")
+
+
+@dataclass(slots=True, frozen=True)
+class FunctionSpec:
+    """Desired IoT Open function for one HA entity."""
+
+    entity_id: str
+    type: str
+    meta: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def topic_read(self) -> str:
+        return self.meta["topic_read"]
+
+    @property
+    def topic_write(self) -> str | None:
+        return self.meta.get("topic_write")
+
+
+def topic_for(entity_id: str) -> str:
+    """``sensor.living_room`` -> ``obj/ha/sensor/living_room``."""
+    domain, _, object_id = entity_id.partition(".")
+    return f"{TOPIC_PREFIX}/{_SAFE.sub('_', domain.lower())}/{_SAFE.sub('_', object_id.lower())}"
+
+
+def entity_for_topic(topic: str) -> str | None:
+    """Inverse of :func:`topic_for` (``obj/ha/sensor/x`` or ``set/obj/ha/sensor/x`` -> ``sensor.x``).
+
+    ``.../onoff`` (dimmer on/off topics) map to the same entity.
+    """
+    if topic.startswith(WRITE_PREFIX):
+        topic = topic[len(WRITE_PREFIX) :]
+    parts = topic.split("/")
+    if len(parts) == 5 and parts[4] == ONOFF_SUFFIX:
+        parts = parts[:4]
+    if len(parts) != 4 or f"{parts[0]}/{parts[1]}" != TOPIC_PREFIX:
+        return None
+    return f"{parts[2]}.{parts[3]}"
+
+
+def is_onoff_topic(topic: str) -> bool:
+    """``set/obj/ha/light/x/onoff``."""
+    return topic.rstrip("/").endswith(f"/{ONOFF_SUFFIX}")
+
+
+def dimmer_level(state: str | None, attributes: dict[str, Any]) -> int | None:
+    """Brightness 0-100 % for a dimmer (0 when off)."""
+    if state is None or str(state).lower() in UNAVAILABLE_STATES:
+        return None
+    if state == "off":
+        return 0
+    brightness = attributes.get("brightness")
+    if brightness is None:
+        return 100
+    return max(0, min(100, round(float(brightness) / 255 * 100)))
+
+
+def is_controllable(domain: str) -> bool:
+    """Whether IoT Open may control entities of this domain."""
+    return domain in ON_OFF_CONTROL or domain in NUMBER_CONTROL or domain in TWO_STATE_CONTROL or domain in (
+        "button",
+        "input_button",
+        "scene",
+        "script",
+    )
+
+
+def function_spec(
+    entity_id: str,
+    name: str,
+    attributes: dict[str, Any],
+    source: str,
+    *,
+    source_id: str | None = None,
+    allow_control: bool = True,
+    iot_device_id: int | None = None,
+) -> FunctionSpec:
+    """Build the IoT Open function for an entity."""
+    domain = entity_id.split(".", 1)[0]
+    device_class = attributes.get("device_class")
+    topic = topic_for(entity_id)
+    meta: dict[str, str] = {
+        "name": name,
+        "topic_read": topic,
+        META_SOURCE: source,
+        META_ENTITY_ID: entity_id,
+    }
+    if source_id:
+        meta[META_SOURCE_ID] = source_id
+    if iot_device_id is not None:
+        meta["device_id"] = str(iot_device_id)
+
+    type_ = str(device_class or domain)
+    meta["visible"] = "true"
+    if device_class:
+        meta[META_DEVICE_CLASS] = str(device_class)
+    if domain == "binary_sensor":
+        # IoT Open standard types: door, movement, boolean_text (IoT Open Academy, function metadata)
+        if device_class in DOOR_CLASSES:
+            type_ = "door"
+            meta.update(state_open="1", state_closed="0", text_open="Open", text_closed="Closed")
+        elif device_class in MOVEMENT_CLASSES:
+            type_ = "movement"
+            meta.update(
+                state_movement="1", state_nomovement="0", text_movement="Movement", text_nomovement="No movement"
+            )
+        else:
+            type_ = "boolean_text"
+            meta.update(state_true="1", state_false="0", text_true="On", text_false="Off")
+    elif domain == "light" and is_dimmable(attributes):
+        type_ = "dimmer"
+        meta.update(
+            min="0",
+            max="100",
+            unit="%",
+            state_on="1",
+            state_off="0",
+            topic_read_onoff=f"{topic}/{ONOFF_SUFFIX}",
+        )
+        if allow_control:
+            meta["topic_write_onoff"] = f"{WRITE_PREFIX}{topic}/{ONOFF_SUFFIX}"
+    elif domain in ON_OFF_CONTROL:
+        type_ = "switch"
+        meta.update(state_on="1", state_off="0", text_on="On", text_off="Off")
+    elif domain in _TWO_STATE:
+        _, text_on, text_off = _TWO_STATE[domain]
+        meta.update(state_on="1", state_off="0", text_on=text_on, text_off=text_off)
+        type_ = domain if domain != "cover" or not device_class else str(device_class)
+    elif domain in NUMBER_CONTROL or domain == "sensor":
+        unit = attributes.get("unit_of_measurement")
+        if unit:
+            meta["unit"] = str(unit)
+        if domain in NUMBER_CONTROL:
+            type_ = domain
+    if allow_control and is_controllable(domain):
+        meta["topic_write"] = f"{WRITE_PREFIX}{topic}"
+    meta[META_HA_TYPE] = type_
+    return FunctionSpec(entity_id=entity_id, type=type_, meta=meta)
+
+
+def export_value(domain: str, state: str | None) -> tuple[Any, str] | None:
+    """HA state -> (IoT Open value, msg). ``None`` when the state should not be published."""
+    if state is None:
+        return None
+    raw = str(state)
+    if raw.lower() in UNAVAILABLE_STATES:
+        return None
+    if domain in ON_OFF_CONTROL or domain in ON_OFF_READ_ONLY:
+        if raw == "on":
+            return 1, ""
+        if raw == "off":
+            return 0, ""
+        return None
+    if domain in _TWO_STATE:
+        mapping = _TWO_STATE[domain][0]
+        if raw in mapping:
+            return mapping[raw], raw
+        return None
+    try:
+        number = float(raw)
+    except ValueError:
+        return raw[:255], ""  # text state (e.g. enum sensor, select, person zone)
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    return (int(number) if number.is_integer() and "." not in raw else number), ""
+
+
+def _truthy(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    text = str(value).strip().lower()
+    if text in ("1", "on", "true", "open", "locked", "yes"):
+        return True
+    if text in ("0", "off", "false", "closed", "close", "unlocked", "no"):
+        return False
+    try:
+        return float(text) != 0
+    except ValueError:
+        return None
+
+
+def dimmer_command(value: Any) -> tuple[str, str, dict[str, Any]] | None:
+    """Level 0-100 on a dimmer's topic_write -> light service."""
+    try:
+        level = float(value)
+    except (TypeError, ValueError):
+        return None
+    if level <= 0:
+        return "light", "turn_off", {}
+    return "light", "turn_on", {"brightness_pct": max(1, min(100, round(level)))}
+
+
+def command_service(domain: str, value: Any) -> tuple[str, str, dict[str, Any]] | None:
+    """IoT Open command value -> (domain, service, data) for ``hass.services.async_call``."""
+    if domain in ON_OFF_CONTROL:
+        on = _truthy(value)
+        if on is None:
+            return None
+        return domain, "turn_on" if on else "turn_off", {}
+    if domain in NUMBER_CONTROL:
+        try:
+            return domain, "set_value", {"value": float(value)}
+        except (TypeError, ValueError):
+            return None
+    if domain == "lock":
+        on = _truthy(value)
+        return None if on is None else ("lock", "lock" if on else "unlock", {})
+    if domain in ("cover", "valve"):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            number = None
+        if number is not None and number not in (0, 1) and 0 <= number <= 100:
+            return domain, f"set_{domain}_position", {"position": int(number)}
+        on = _truthy(value)
+        return None if on is None else (domain, f"open_{domain}" if on else f"close_{domain}", {})
+    if domain in ("button", "input_button"):
+        return (domain, "press", {}) if _truthy(value) else None
+    if domain in ("scene", "script"):
+        return (domain, "turn_on", {}) if _truthy(value) else None
+    return None
+
+
+def device_meta(
+    name: str,
+    manufacturer: str | None,
+    model: str | None,
+    ha_device_id: str,
+    source: str,
+    source_id: str | None = None,
+) -> dict[str, str]:
+    """Meta for an IoT Open device that mirrors a HA device."""
+    meta = {"name": name, META_SOURCE: source, META_HA_DEVICE_ID: ha_device_id}
+    if source_id:
+        meta[META_SOURCE_ID] = source_id
+    if manufacturer:
+        meta["manufacturer"] = manufacturer
+    if model:
+        meta["model"] = model
+    return meta
+
+
+def meta_differs(current: dict[str, str], wanted: dict[str, str]) -> bool:
+    """True when any key we own has a different value (other keys are left alone)."""
+    return any(current.get(k) != v for k, v in wanted.items())
+
+
+def managed_keys_removed(current: dict[str, str], wanted: dict[str, str]) -> list[str]:
+    """Keys we used to set but no longer want (e.g. topic_write after control was disabled)."""
+    ours = {
+        "topic_write", "unit", "device_id", META_DEVICE_CLASS,
+        "state_on", "state_off", "text_on", "text_off",
+        "state_open", "state_closed", "text_open", "text_closed",
+        "state_movement", "state_nomovement", "text_movement", "text_nomovement",
+        "state_true", "state_false", "text_true", "text_false",
+        "min", "max", "topic_read_onoff", "topic_write_onoff",
+    }
+    return [k for k in ours if k in current and k not in wanted]
+
+
+# Presentation keys a person may change in IoT Open (IoT Open is master for these). HA only fills them in
+# when they are missing – or when the function's type changes – so a manual edit such as
+# text_false = "Closed", a new name or visible = "false" is not reverted on the next reconcile.
+# Delete the key in IoT Open to get HA's value back.
+SEED_ONLY_KEYS = {"name", "visible", "unit"}
+
+
+def is_seed_only(key: str) -> bool:
+    """Keys HA sets once (create) and then leaves to IoT Open."""
+    return key in SEED_ONLY_KEYS or key.startswith("text_")
+
+
+def desired_update(
+    current_meta: dict[str, str], current_type: str, spec: FunctionSpec
+) -> tuple[str, dict[str, str], list[str]]:
+    """What to write to an existing function: (type, meta to set, keys to remove).
+
+    IoT Open is master for the type too. ``ha.type`` remembers the type HA suggested:
+    * same type as HA wants: structural keys (topics, ha.*, device_id, state_*, min/max …) follow HA,
+      seed-only keys (name, visible, unit, text_*) are only filled in when missing;
+    * type changed in IoT Open (e.g. boolean_text -> door) while HA still suggests the same type:
+      the type is kept, and so are all state_*/text_* keys (they belong to that type now);
+    * HA suggests a new type (e.g. the entity got another device_class): HA's type and keys are written
+      and the old texts are replaced, since they no longer fit.
+    Objects from before ``ha.type`` existed count as changed in IoT Open when the types differ.
+    """
+    if current_type == spec.type:
+        ha_changed = overridden = False
+    else:
+        previous = current_meta.get(META_HA_TYPE)
+        ha_changed = previous is not None and previous != spec.type
+        overridden = not ha_changed
+    type_ = current_type if overridden else spec.type
+
+    def users(k: str) -> bool:
+        """Keys IoT Open decides (HA does not touch them)."""
+        return overridden and (k.startswith("state_") or k.startswith("text_"))
+
+    wanted = {
+        k: v
+        for k, v in spec.meta.items()
+        if not users(k) and (ha_changed or not is_seed_only(k) or k not in current_meta)
+    }
+    removed = [
+        k
+        for k in managed_keys_removed(current_meta, spec.meta)
+        if not users(k) and (ha_changed or not is_seed_only(k))
+    ]
+    return type_, wanted, removed
+
+
+def desired_device_meta(current_meta: dict[str, str], meta: dict[str, str]) -> dict[str, str]:
+    """Device meta to enforce: everything except a name that has been set (renames in IoT Open stay)."""
+    return {k: v for k, v in meta.items() if not (k == "name" and current_meta.get("name"))}
+
+
+def is_own(get_meta: Any, instance_id: str | None) -> bool:
+    """Was this object created by the HA instance ``instance_id``?
+
+    ``ha.source_id`` decides; objects from before it existed carry the id in ``ha.source``.
+    """
+    if not instance_id:
+        return False
+    return get_meta(META_SOURCE_ID) == instance_id or get_meta(META_SOURCE) == instance_id

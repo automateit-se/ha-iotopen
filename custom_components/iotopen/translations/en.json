@@ -1,0 +1,143 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to IoT Open",
+        "description": "Enter your IoT Open (Lynx) server and choose how to sign in.",
+        "data": {
+          "url": "Server URL",
+          "auth_method": "Sign-in method"
+        },
+        "data_description": {
+          "url": "Usually {default_url}",
+          "auth_method": "An API key is recommended because it never expires."
+        }
+      },
+      "api_key": {
+        "title": "API key",
+        "description": "Paste an API key (or token) for {url}.",
+        "data": {
+          "token": "API key"
+        },
+        "data_description": {
+          "token": "Sent as the X-API-Key header. Stored in Home Assistant."
+        }
+      },
+      "credentials": {
+        "title": "Sign in",
+        "description": "Sign in to {url}. The password is only used to get a token and is not stored. Tokens expire, so you will be asked to sign in again later. Use an API key to avoid this.",
+        "data": {
+          "username": "Email / username",
+          "password": "Password"
+        }
+      },
+      "two_factor": {
+        "title": "Two-factor authentication",
+        "description": "Enter the code from your authenticator app.",
+        "data": {
+          "code": "Code"
+        }
+      },
+      "installations": {
+        "title": "Installations",
+        "description": "Choose the installations to add. Each function becomes an entity.",
+        "data": {
+          "installations": "Installations",
+          "add_new_installations": "Add new installations automatically"
+        },
+        "data_description": {
+          "add_new_installations": "New installations are looked for at start-up and once an hour."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Sign in again",
+        "description": "IoT Open ({url}) rejected the stored API key or token. Choose how to sign in.",
+        "data": {
+          "auth_method": "Sign-in method"
+        }
+      }
+    },
+    "error": {
+      "invalid_url": "Invalid URL",
+      "invalid_auth": "Invalid credentials or API key",
+      "cannot_connect": "Cannot connect to the IoT Open server",
+      "unknown": "Unexpected error",
+      "invalid_code": "Invalid or expired code",
+      "no_selection": "Select at least one installation"
+    },
+    "abort": {
+      "already_configured": "This IoT Open account is already configured",
+      "reauth_successful": "Re-authentication was successful",
+      "no_installations": "No installations are accessible with this account",
+      "wrong_account": "You signed in with a different IoT Open account than before"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Installations",
+        "description": "Choose installations, what Home Assistant mirrors into IoT Open and what it imports. This instance: id {instance_id}.",
+        "data": {
+          "installations": "Installations",
+          "add_new_installations": "Add new installations automatically",
+          "export_installation": "Mirror Home Assistant into installation",
+          "export_label": "Label that selects what is mirrored",
+          "export_control": "Allow IoT Open to control Home Assistant",
+          "instance_name": "This Home Assistant's name in IoT Open",
+          "import_mode": "Import from IoT Open"
+        },
+        "data_description": {
+          "add_new_installations": "New installations are looked for at start-up and once an hour.",
+          "export_installation": "Entities and devices with the label below are created as devices and functions in this IoT Open installation (obj/ha/… for status, set/obj/ha/… for control).",
+          "export_label": "Put this label on entities or devices in Home Assistant. The label is created automatically.",
+          "export_control": "Switches, lights, locks, covers, numbers etc. get a topic_write (set/obj/…) that calls the Home Assistant service.",
+          "instance_name": "Use this value in the metadata key ha.destination on IoT Open devices or functions that should appear here (the long instance id {instance_id} also works; * means all instances).",
+          "import_mode": "Only tagged: only devices/functions whose ha.destination names this instance. All: every function in the selected installations."
+        }
+      }
+    },
+    "error": {
+      "no_selection": "Select at least one installation"
+    },
+    "abort": {
+      "invalid_auth": "Invalid credentials or API key",
+      "cannot_connect": "Cannot connect to the IoT Open server"
+    }
+  },
+  "selector": {
+    "auth_method": {
+      "options": {
+        "api_key": "API key (recommended)",
+        "credentials": "Username and password (supports 2FA)"
+      }
+    },
+    "import_mode": {
+      "options": {
+        "tagged": "Only tagged with ha.destination (recommended)",
+        "all": "All functions in the selected installations"
+      }
+    }
+  },
+  "config_subentries": {
+    "installation": {
+      "entry_type": "Installation",
+      "initiate_flow": {
+        "user": "Add installation"
+      },
+      "step": {
+        "user": {
+          "title": "Add IoT Open installation",
+          "description": "Choose an installation to import from. With import mode 'Only tagged', only devices/functions with ha.destination for this instance appear.",
+          "data": {
+            "installation_id": "Installation"
+          }
+        }
+      },
+      "abort": {
+        "no_more_installations": "All accessible installations are already added",
+        "invalid_auth": "Invalid credentials or API key",
+        "cannot_connect": "Cannot connect to the IoT Open server"
+      }
+    }
+  }
+}

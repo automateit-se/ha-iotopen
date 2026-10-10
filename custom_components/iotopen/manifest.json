@@ -1,0 +1,21 @@
+{
+  "domain": "iotopen",
+  "name": "IoT Open",
+  "codeowners": [
+    "@developmentautomateit"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "frontend",
+    "http"
+  ],
+  "documentation": "https://github.com/developmentautomateit/ha-iotopen",
+  "integration_type": "hub",
+  "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/developmentautomateit/ha-iotopen/issues",
+  "loggers": [
+    "custom_components.iotopen"
+  ],
+  "requirements": [],
+  "version": "0.3.0"
+}

@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pyiotopen"
+version = "0.1.0"
+description = "Async Python client for IoT Open (Lynx): REST API and live MQTT-over-WebSocket values"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [{ name = "AutomateIT", email = "development@automateit.se" }]
+keywords = ["iot open", "lynx", "home assistant", "mqtt", "asyncio"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Framework :: AsyncIO",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Home Automation",
+  "Typing :: Typed",
+]
+# Pure Python, only aiohttp (already bundled with Home Assistant) -> nothing to compile on ARM/RPi.
+dependencies = ["aiohttp>=3.9"]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-aiohttp>=1.0", "pytest-cov"]
+
+[project.urls]
+Homepage = "https://github.com/developmentautomateit/ha-iotopen/tree/main/pyiotopen"
+Issues = "https://github.com/developmentautomateit/ha-iotopen/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pyiotopen"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "ASYNC", "RUF"]

@@ -1,0 +1,186 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 900" width="1280" height="900" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <title>IoT Open for Home Assistant – architecture</title>
+  <defs>
+    <marker id="a-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+    <marker id="a-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#d97706"/></marker>
+    <marker id="a-grey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/></marker>
+    <style>
+      .h { font-size: 16px; font-weight: 700; }
+      .b { font-size: 14px; font-weight: 700; fill: #111827; }
+      .t { font-size: 12.5px; fill: #374151; }
+      .s { font-size: 11.5px; fill: #6b7280; }
+      .m { font-size: 12px; fill: #1f2937; font-family: ui-monospace, 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; }
+      .box { fill: #ffffff; stroke-width: 1.2; }
+      .halo { fill: none; stroke: #ffffff; stroke-width: 7; }
+      .blue { fill: none; stroke: #2563eb; stroke-width: 2; }
+      .orange { fill: none; stroke: #d97706; stroke-width: 2; }
+      .grey { fill: none; stroke: #6b7280; stroke-width: 2; }
+      .badge-b { fill: #2563eb; } .badge-o { fill: #d97706; }
+      .bn { font-size: 12px; font-weight: 700; fill: #ffffff; text-anchor: middle; }
+      .pill { fill: #ecfeff; stroke: #0e7490; stroke-width: 1; }
+    </style>
+  </defs>
+
+  <rect x="0.5" y="0.5" width="1279" height="899" rx="16" fill="#ffffff" stroke="#e5e7eb"/>
+  <text x="40" y="48" font-size="22" font-weight="700" fill="#111827">IoT Open ↔ Home Assistant – how the integration works</text>
+  <text x="40" y="74" class="t"><tspan fill="#2563eb" font-weight="700">Blue</tspan>: IoT Open → Home Assistant (import, live values, control).   <tspan fill="#d97706" font-weight="700">Orange</tspan>: Home Assistant → IoT Open (mirroring of labelled entities).</text>
+
+  <!-- Column 1: IoT Open -->
+  <rect x="30" y="100" width="280" height="620" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
+  <text x="50" y="130" class="h" fill="#1e3a8a">IoT Open (Lynx)</text>
+
+  <rect x="50" y="150" width="240" height="130" rx="8" class="box" stroke="#93c5fd"/>
+  <text x="66" y="175" class="b">REST API</text>
+  <text x="66" y="199" class="m">/api/v2/installationinfo</text>
+  <text x="66" y="218" class="m">/api/v2/devicex/{iid}</text>
+  <text x="66" y="237" class="m">/api/v2/functionx/{iid}</text>
+  <text x="66" y="256" class="m">/api/v2/status/{iid}</text>
+
+  <rect x="50" y="330" width="240" height="200" rx="8" class="box" stroke="#93c5fd"/>
+  <text x="66" y="355" class="b">MQTT broker</text>
+  <text x="66" y="375" class="m">wss://&lt;server&gt;/mqtt</text>
+  <text x="66" y="405" class="m">&lt;cid&gt;/obj/…</text>
+  <text x="66" y="422" class="s">values (topic_read, logged)</text>
+  <text x="66" y="450" class="m">&lt;cid&gt;/set/obj/…</text>
+  <text x="66" y="467" class="s">commands (topic_write)</text>
+  <text x="66" y="495" class="m">&lt;cid&gt;/evt/…/updated</text>
+  <text x="66" y="512" class="s">devices/functions changed</text>
+
+  <rect x="50" y="560" width="240" height="140" rx="8" class="box" stroke="#93c5fd"/>
+  <text x="66" y="585" class="b">Data model</text>
+  <text x="66" y="610" class="m">Installation</text>
+  <text x="66" y="629" class="m">└ Device</text>
+  <text x="66" y="648" class="m">  └ Function</text>
+  <text x="66" y="673" class="s">type · topic_read · topic_write ·</text>
+  <text x="66" y="689" class="s">state_* · text_* · metadata</text>
+
+  <!-- Column 2: pyiotopen -->
+  <rect x="390" y="100" width="250" height="620" rx="12" fill="#f9fafb" stroke="#d1d5db"/>
+  <text x="410" y="130" class="h" fill="#111827">pyiotopen</text>
+  <text x="410" y="148" class="s">async library (aiohttp), vendored</text>
+
+  <rect x="410" y="165" width="210" height="100" rx="8" class="box" stroke="#9ca3af"/>
+  <text x="426" y="190" class="b">IoTOpenClient</text>
+  <text x="426" y="211" class="t">REST, X-API-Key header</text>
+  <text x="426" y="230" class="t">snapshot() of installation</text>
+  <text x="426" y="249" class="t">create / update / delete</text>
+
+  <rect x="410" y="290" width="210" height="70" rx="8" class="box" stroke="#9ca3af"/>
+  <text x="426" y="315" class="b">parse_message()</text>
+  <text x="426" y="338" class="t">→ ValueUpdate | StructureEvent</text>
+
+  <rect x="410" y="385" width="210" height="100" rx="8" class="box" stroke="#9ca3af"/>
+  <text x="426" y="410" class="b">IoTOpenMqtt</text>
+  <text x="426" y="431" class="t">MQTT 3.1.1 over WebSocket</text>
+  <text x="426" y="450" class="t">reconnect · keep-alive</text>
+  <text x="426" y="469" class="t">subscription diff · publish</text>
+
+  <!-- Column 3: Home Assistant -->
+  <rect x="720" y="100" width="530" height="620" rx="12" fill="#f0fdfa" stroke="#99f6e4"/>
+  <text x="740" y="130" class="h" fill="#134e4a">Home Assistant – custom_components/iotopen</text>
+
+  <rect x="740" y="150" width="490" height="58" rx="8" class="box" stroke="#5eead4"/>
+  <text x="756" y="174" class="b">Config entry <tspan class="t" font-weight="400">(one IoT Open account: API key or login)</tspan></text>
+  <text x="756" y="195" class="s">one subentry per installation · options: label, instance name, import mode, control</text>
+
+  <rect x="740" y="225" width="300" height="150" rx="8" class="box" stroke="#5eead4"/>
+  <text x="756" y="250" class="b">IoTOpenHub</text>
+  <text x="756" y="273" class="t">REST snapshot per installation</text>
+  <text x="756" y="292" class="t">diff → add / update / remove entities</text>
+  <text x="756" y="311" class="t">structure events debounced 1 s</text>
+  <text x="756" y="330" class="t">unavailable after 60 s offline</text>
+  <text x="756" y="349" class="t">ha.destination import filter</text>
+
+  <rect x="1060" y="225" width="170" height="150" rx="8" class="box" stroke="#5eead4"/>
+  <text x="1076" y="250" class="b">mapping.py</text>
+  <text x="1076" y="273" class="t">function →</text>
+  <text x="1076" y="292" class="t">platform, device class,</text>
+  <text x="1076" y="311" class="t">state class, unit</text>
+  <text x="1076" y="330" class="t">IoT Open std. types</text>
+  <text x="1076" y="349" class="t">ha.* overrides</text>
+  <line x1="1040" y1="300" x2="1058" y2="300" class="grey" marker-end="url(#a-grey)"/>
+
+  <rect x="740" y="395" width="490" height="80" rx="8" class="box" stroke="#5eead4"/>
+  <text x="756" y="419" class="b">Entities</text>
+  <rect x="756" y="434" width="80" height="26" rx="13" class="pill"/><text x="796" y="452" class="t" text-anchor="middle">sensor</text>
+  <rect x="846" y="434" width="112" height="26" rx="13" class="pill"/><text x="902" y="452" class="t" text-anchor="middle">binary_sensor</text>
+  <rect x="968" y="434" width="76" height="26" rx="13" class="pill"/><text x="1006" y="452" class="t" text-anchor="middle">switch</text>
+  <rect x="1054" y="434" width="66" height="26" rx="13" class="pill"/><text x="1087" y="452" class="t" text-anchor="middle">light</text>
+  <text x="1130" y="452" class="s">1 function</text>
+  <text x="1130" y="466" class="s">= 1 entity</text>
+
+  <rect x="740" y="500" width="290" height="200" rx="8" class="box" stroke="#fdba74"/>
+  <text x="756" y="525" class="b">IoTOpenExporter</text>
+  <text x="756" y="548" class="t">entities/devices with the label</text>
+  <text x="756" y="567" class="t">“IoT Open” → IoT Open devices and</text>
+  <text x="756" y="586" class="t">functions (owned via ha.source_id)</text>
+  <text x="756" y="610" class="t">state change → obj/ha/&lt;domain&gt;/&lt;id&gt;</text>
+  <text x="756" y="629" class="t">set/obj/ha/… → HA service call</text>
+  <text x="756" y="653" class="s">IoT Open stays master for type, name,</text>
+  <text x="756" y="669" class="s">visible, unit and text_* once seeded</text>
+
+  <rect x="1072" y="500" width="158" height="200" rx="8" class="box" stroke="#d1d5db"/>
+  <text x="1086" y="525" class="b">HA core</text>
+  <text x="1086" y="550" class="t">state machine</text>
+  <text x="1086" y="569" class="t">entity, device and</text>
+  <text x="1086" y="588" class="t">label registries</text>
+  <text x="1086" y="607" class="t">services</text>
+  <text x="1086" y="626" class="t">(turn_on, set_value …)</text>
+  <line x1="1034" y1="600" x2="1068" y2="600" class="orange" marker-start="url(#a-orange)" marker-end="url(#a-orange)"/>
+
+  <!-- IoT Open <-> pyiotopen -->
+  <line x1="292" y1="215" x2="408" y2="215" class="grey" marker-start="url(#a-grey)" marker-end="url(#a-grey)"/>
+  <text x="350" y="207" class="s" text-anchor="middle">HTTPS</text>
+  <line x1="292" y1="435" x2="408" y2="435" class="grey" marker-start="url(#a-grey)" marker-end="url(#a-grey)"/>
+  <text x="350" y="427" class="s" text-anchor="middle">WSS</text>
+  <line x1="515" y1="385" x2="515" y2="362" class="blue" marker-end="url(#a-blue)"/>
+
+  <!-- pyiotopen <-> Home Assistant -->
+  <!-- 1 snapshot -->
+  <path d="M620,215 H700 V255 H738" class="blue" marker-end="url(#a-blue)"/>
+  <!-- 5 create/update functions (drawn with halo so crossings stay readable) -->
+  <path d="M740,540 H655 V245 H622" class="halo"/>
+  <path d="M740,540 H655 V245 H622" class="orange" marker-end="url(#a-orange)"/>
+  <!-- 2 live values + structure events -->
+  <path d="M620,325 H738" class="halo"/>
+  <path d="M620,325 H738" class="blue" marker-end="url(#a-blue)"/>
+  <!-- 3 hub -> entities -->
+  <line x1="890" y1="375" x2="890" y2="393" class="blue" marker-end="url(#a-blue)"/>
+  <!-- 4 control from HA entities -->
+  <path d="M740,435 H622" class="halo"/>
+  <path d="M740,435 H622" class="blue" marker-end="url(#a-blue)"/>
+  <!-- 6 publish HA states -->
+  <path d="M740,600 H565 V487" class="orange" marker-end="url(#a-orange)"/>
+  <!-- 7 commands from IoT Open -->
+  <path d="M470,485 V660 H738" class="orange" marker-end="url(#a-orange)"/>
+
+  <!-- badges -->
+  <circle cx="672" cy="215" r="10" class="badge-b"/><text x="672" y="219" class="bn">1</text>
+  <circle cx="700" cy="325" r="10" class="badge-b"/><text x="700" y="329" class="bn">2</text>
+  <circle cx="912" cy="384" r="10" class="badge-b"/><text x="912" y="388" class="bn">3</text>
+  <circle cx="700" cy="435" r="10" class="badge-b"/><text x="700" y="439" class="bn">4</text>
+  <circle cx="700" cy="540" r="10" class="badge-o"/><text x="700" y="544" class="bn">5</text>
+  <circle cx="700" cy="600" r="10" class="badge-o"/><text x="700" y="604" class="bn">6</text>
+  <circle cx="700" cy="660" r="10" class="badge-o"/><text x="700" y="664" class="bn">7</text>
+
+  <!-- legend -->
+  <line x1="30" y1="745" x2="1250" y2="745" stroke="#e5e7eb"/>
+  <g class="t">
+    <circle cx="44" cy="775" r="10" class="badge-b"/><text x="44" y="779" class="bn">1</text>
+    <text x="62" y="779">Start-up, reload and reconnect: REST snapshot of devices, functions and latest values.</text>
+    <circle cx="44" cy="805" r="10" class="badge-b"/><text x="44" y="809" class="bn">2</text>
+    <text x="62" y="809">Live values on &lt;cid&gt;/obj/…; &lt;cid&gt;/evt/…/updated re-reads the installation after 1 s.</text>
+    <circle cx="44" cy="835" r="10" class="badge-b"/><text x="44" y="839" class="bn">3</text>
+    <text x="62" y="839">The hub creates, updates or removes entities using mapping.py.</text>
+    <circle cx="44" cy="865" r="10" class="badge-b"/><text x="44" y="869" class="bn">4</text>
+    <text x="62" y="869">Switching an entity publishes state_on/state_off to &lt;cid&gt;/&lt;topic_write&gt; (set/obj/…).</text>
+
+    <circle cx="684" cy="775" r="10" class="badge-o"/><text x="684" y="779" class="bn">5</text>
+    <text x="702" y="779">Labelled entities and devices are created as IoT Open devices/functions.</text>
+    <circle cx="684" cy="805" r="10" class="badge-o"/><text x="684" y="809" class="bn">6</text>
+    <text x="702" y="809">Their HA states are published to &lt;cid&gt;/obj/ha/&lt;domain&gt;/&lt;object_id&gt;.</text>
+    <circle cx="684" cy="835" r="10" class="badge-o"/><text x="684" y="839" class="bn">7</text>
+    <text x="702" y="839">Commands on &lt;cid&gt;/set/obj/ha/… call the HA service (when control is allowed).</text>
+    <text x="684" y="869" class="s">&lt;cid&gt; = the installation's client_id. Functions created by HA are skipped by the import side.</text>
+  </g>
+</svg>
