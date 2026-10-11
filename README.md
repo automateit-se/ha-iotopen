@@ -1,6 +1,6 @@
 # IoT Open for Home Assistant
 
-[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=developmentautomateit&repository=ha-iotopen&category=integration)
+[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=automateit-se&repository=ha-iotopen&category=integration)
 [![Open your Home Assistant instance and start setting up IoT Open.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=iotopen)
 
 Connects [IoT Open](https://iotopen.se) (Lynx) and Home Assistant in both directions:
@@ -171,7 +171,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how to work on the code and make a re
 
 ## Support
 
-Report bugs and ideas under [Issues](https://github.com/developmentautomateit/ha-iotopen/issues). Please attach the
+Report bugs and ideas under [Issues](https://github.com/automateit-se/ha-iotopen/issues). Please attach the
 diagnostics file (see above) to bug reports.
 
 Licensed under [Apache 2.0](LICENSE).

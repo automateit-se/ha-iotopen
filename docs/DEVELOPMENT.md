@@ -174,7 +174,7 @@ This follows the same pattern as IoT Open's own web dashboards:
 ## Next steps
 
 1. **GitHub** (repository `ha-iotopen`):
-   - Repository: https://github.com/developmentautomateit/ha-iotopen
+   - Repository: https://github.com/automateit-se/ha-iotopen
    - Push as a private repository, review, then make it public.
    - `pyiotopen/` stays in this repository for now. Move it to its own repository when it is published on PyPI.
 2. **Run the tests** in CI (GitHub Actions) or locally:

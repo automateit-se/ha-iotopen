@@ -28,8 +28,8 @@ dependencies = ["aiohttp>=3.9"]
 test = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-aiohttp>=1.0", "pytest-cov"]
 
 [project.urls]
-Homepage = "https://github.com/developmentautomateit/ha-iotopen/tree/main/pyiotopen"
-Issues = "https://github.com/developmentautomateit/ha-iotopen/issues"
+Homepage = "https://github.com/automateit-se/ha-iotopen/tree/main/pyiotopen"
+Issues = "https://github.com/automateit-se/ha-iotopen/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pyiotopen"]

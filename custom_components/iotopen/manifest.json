@@ -9,10 +9,10 @@
     "frontend",
     "http"
   ],
-  "documentation": "https://github.com/developmentautomateit/ha-iotopen",
+  "documentation": "https://github.com/automateit-se/ha-iotopen",
   "integration_type": "hub",
   "iot_class": "cloud_push",
-  "issue_tracker": "https://github.com/developmentautomateit/ha-iotopen/issues",
+  "issue_tracker": "https://github.com/automateit-se/ha-iotopen/issues",
   "loggers": [
     "custom_components.iotopen"
   ],
