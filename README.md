@@ -25,8 +25,10 @@ Connects [IoT Open](https://iotopen.se) (Lynx) and Home Assistant in both direct
 
 ### HACS (recommended)
 
-1. Click the first button above, or in HACS go to *⋮ → Custom repositories* and add this repository as *Integration*.
-2. Install **IoT Open** and restart Home Assistant.
+1. In HACS, go to *⋮ → Custom repositories*, add `https://github.com/automateit-se/ha-iotopen` and choose the
+   type *Integration*. This step is needed until the integration is in the HACS default list; before that, the
+   first button above only shows "Repository not found".
+2. Click the first button above, or search for **IoT Open** in HACS. Install it and restart Home Assistant.
 3. Click the second button above, or go to *Settings → Devices & services → Add integration → IoT Open*.
 
 ### Manual
