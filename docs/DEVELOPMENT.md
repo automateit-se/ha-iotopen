@@ -185,18 +185,19 @@ This follows the same pattern as IoT Open's own web dashboards:
    - Set up trusted publishing and publish 0.1.0. `pyiotopen/.github/workflows/publish.yml` is a template: GitHub
      only runs workflows in the root `.github/`, so move it there (or to the new repository) first.
    - Then add it to `requirements` in `manifest.json` and switch to absolute imports.
-5. **Brands**:
-   - The integration ships its own `custom_components/iotopen/brand/` images (icon, logo, dark logo), which newer
-     Home Assistant versions show directly.
-   - For older versions and HACS listings, open a PR to `home-assistant/brands` with `custom_integrations/iotopen/icon.png` (256×256) and `icon@2x.png`
-     (512×512), preferably also `logo.png`.
-   - Use IoT Open's official logo, supplied by IoT Open.
-   - Then remove `ignore: brands` in `validate.yml`.
+5. **Brands**: done.
+   - The integration ships its own `custom_components/iotopen/brand/` images (icon, logo, dark logo). Home Assistant
+     2026.3 and later show them directly, and the HACS brands check accepts them, so no PR to
+     `home-assistant/brands` is needed (its `custom_integrations` folder is legacy). Older Home Assistant versions
+     show a placeholder icon.
+   - The images should be IoT Open's official logo, supplied by IoT Open.
+   - If the integration moves to Home Assistant core, remove the local images and add them to
+     `home-assistant/brands` instead.
+   - Vector sources for the icon and the label badge are in `docs/brand/`.
 6. **HACS default**:
-   - Public repository with description and topics (`home-assistant`, `hacs`, `iot-open`).
-   - At least one GitHub release.
-   - hassfest and the HACS action green.
-   - Brands merged.
+   - Public repository with description and topics (`home-assistant`, `hacs`, `iot-open`): done.
+   - At least one GitHub release: done (`v0.3.1`).
+   - hassfest and the HACS action green, including the brands check: done.
    - Then a PR to `hacs/default` adding the repository to the `integration` file (alphabetically).
 7. **Features**:
    - `number` (topic_write without on/off) and `select` on the import side.

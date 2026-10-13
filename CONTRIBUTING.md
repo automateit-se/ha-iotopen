@@ -13,7 +13,6 @@ make a release. For design decisions and the roadmap, see [docs/DEVELOPMENT.md](
 | `tests/` | Integration tests (pytest-homeassistant-custom-component). |
 | `tools/sync_vendor.py` | Copies `pyiotopen/src/pyiotopen` into the integration. |
 | `docs/` | Development notes and the architecture diagram. |
-| `brands/` | Images prepared for a PR to `home-assistant/brands`. |
 
 ## Development setup
 
