@@ -5,7 +5,16 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
-- CI: the HACS action now runs its brands check, which passes with the integration's own `brand/` images.
+## 0.3.2
+
+### Brand images
+
+- Home Assistant 2026.3 and later, and HACS, use the integration's own `brand/` images (icon, logo, dark logo).
+  No entry in `home-assistant/brands` is needed. Older Home Assistant versions show a placeholder icon.
+
+### CI
+
+- The HACS action now runs its brands check, which passes with the integration's own `brand/` images.
   The `brands/` folder is removed; the SVG sources moved to `docs/brand/`.
 
 ## 0.3.1
