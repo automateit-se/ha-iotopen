@@ -5,7 +5,18 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+## 0.3.1
+
+First GitHub release. It also contains everything listed under 0.3.0, which was never published as a release.
+
+### Documentation
+
 - README: add the HACS custom repository step, needed until the integration is in the HACS default list.
+
+### Releases
+
+- Pushing a `v*` tag now publishes the GitHub release, with notes from this changelog and `iotopen.zip` attached.
+- Dependabot keeps the GitHub Actions in the workflows up to date.
 
 ## 0.3.0 – first public release
 

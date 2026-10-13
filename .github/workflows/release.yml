@@ -1,25 +1,40 @@
 name: Release
 
+# Push a tag such as v0.3.1 to publish a release. The release notes are the matching
+# "## 0.3.1" section of CHANGELOG.md, and iotopen.zip is attached.
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v*"]
 
 permissions:
   contents: write
 
 jobs:
-  zip:
-    # HACS can install from this zip (set "zip_release": true + "filename" in hacs.json if wanted)
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set version in manifest from tag
+      - name: Check version and extract release notes
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          jq --arg v "$VERSION" '.version = $v' custom_components/iotopen/manifest.json > m.json
-          mv m.json custom_components/iotopen/manifest.json
+          MANIFEST_VERSION="$(jq -r .version custom_components/iotopen/manifest.json)"
+          if [ "$MANIFEST_VERSION" != "$VERSION" ]; then
+            echo "::error::manifest.json has version $MANIFEST_VERSION, tag is $GITHUB_REF_NAME"
+            exit 1
+          fi
+          awk -v v="$VERSION" '
+            /^## / { if (found) exit; if ($2 == v) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md > release_notes.md
+          if ! grep -q '[^[:space:]]' release_notes.md; then
+            echo "::error::CHANGELOG.md has no section for $VERSION"
+            exit 1
+          fi
+          cat release_notes.md
       - name: Zip integration
         run: cd custom_components/iotopen && zip -r ../../iotopen.zip .
       - uses: softprops/action-gh-release@v2
         with:
+          name: ${{ github.ref_name }}
+          body_path: release_notes.md
           files: iotopen.zip
