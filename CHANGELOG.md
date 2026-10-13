@@ -16,6 +16,7 @@ First GitHub release. It also contains everything listed under 0.3.0, which was 
 ### Releases
 
 - Pushing a `v*` tag now publishes the GitHub release, with notes from this changelog and `iotopen.zip` attached.
+  The workflow can also be run manually on `main`; it then creates the tag from the version in `manifest.json`.
 - Dependabot keeps the GitHub Actions in the workflows up to date.
 
 ## 0.3.0 – first public release
