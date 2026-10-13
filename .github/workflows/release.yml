@@ -1,10 +1,14 @@
 name: Release
 
-# Push a tag such as v0.3.1 to publish a release. The release notes are the matching
-# "## 0.3.1" section of CHANGELOG.md, and iotopen.zip is attached.
+# Publish a release in one of two ways:
+# - push a tag such as v0.3.1, or
+# - run this workflow manually on main (Actions → Release → Run workflow); it creates the tag
+#   v<version> from manifest.json.
+# The release notes are the matching "## 0.3.1" section of CHANGELOG.md, and iotopen.zip is attached.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,12 +19,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check version and extract release notes
+        id: version
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
           MANIFEST_VERSION="$(jq -r .version custom_components/iotopen/manifest.json)"
-          if [ "$MANIFEST_VERSION" != "$VERSION" ]; then
-            echo "::error::manifest.json has version $MANIFEST_VERSION, tag is $GITHUB_REF_NAME"
-            exit 1
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            if [ "$MANIFEST_VERSION" != "$VERSION" ]; then
+              echo "::error::manifest.json has version $MANIFEST_VERSION, tag is $GITHUB_REF_NAME"
+              exit 1
+            fi
+          else
+            if [ "$GITHUB_REF_NAME" != "main" ]; then
+              echo "::error::Run the release from main, not $GITHUB_REF_NAME"
+              exit 1
+            fi
+            VERSION="$MANIFEST_VERSION"
+            if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" > /dev/null; then
+              echo "::error::Tag v$VERSION already exists. Bump the version in manifest.json first."
+              exit 1
+            fi
           fi
           awk -v v="$VERSION" '
             /^## / { if (found) exit; if ($2 == v) { found = 1; next } }
@@ -31,10 +48,13 @@ jobs:
             exit 1
           fi
           cat release_notes.md
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
       - name: Zip integration
         run: cd custom_components/iotopen && zip -r ../../iotopen.zip .
       - uses: softprops/action-gh-release@v2
         with:
-          name: ${{ github.ref_name }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ steps.version.outputs.tag }}
           body_path: release_notes.md
           files: iotopen.zip
