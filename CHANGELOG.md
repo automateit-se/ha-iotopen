@@ -5,6 +5,10 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+## 0.3.1
+
+### Documentation
+
 - README: add the HACS custom repository step, needed until the integration is in the HACS default list.
 
 ## 0.3.0 – first public release

@@ -179,7 +179,7 @@ This follows the same pattern as IoT Open's own web dashboards:
    - `pyiotopen/` stays in this repository for now. Move it to its own repository when it is published on PyPI.
 2. **Run the tests** in CI (GitHub Actions) or locally:
    `pip install -r requirements_test.txt && pytest && pytest pyiotopen/tests`.
-3. **First release**: tag `v0.3.0` and publish a GitHub release (see [CONTRIBUTING.md](../CONTRIBUTING.md)).
+3. **First release**: tag `v0.3.1` and publish a GitHub release (0.3.0 was never published as a release) (see [CONTRIBUTING.md](../CONTRIBUTING.md)).
 4. **PyPI**:
    - Check that the name `pyiotopen` is free.
    - Set up trusted publishing and publish 0.1.0. `pyiotopen/.github/workflows/publish.yml` is a template: GitHub
