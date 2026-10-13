@@ -5,6 +5,9 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+- CI: the HACS action now runs its brands check, which passes with the integration's own `brand/` images.
+  The `brands/` folder is removed; the SVG sources moved to `docs/brand/`.
+
 ## 0.3.1
 
 First GitHub release. It also contains everything listed under 0.3.0, which was never published as a release.
