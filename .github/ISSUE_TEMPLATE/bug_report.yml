@@ -32,7 +32,7 @@ body:
     attributes:
       label: Integration version
       description: Shown in HACS, or in custom_components/iotopen/manifest.json
-      placeholder: "0.3.1"
+      placeholder: "0.3.2"
     validations:
       required: true
   - type: textarea
