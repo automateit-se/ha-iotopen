@@ -101,6 +101,14 @@ This follows the same pattern as IoT Open's own web dashboards:
   supports is deleted. An unavailable player takes its features from the entity registry, so its functions are not
   deleted while it is offline. Function names get a Swedish or English suffix from HA's language; IoT Open is master
   for the name as usual. See `function_specs` and `media_*` in `export_mapping.py`.
+- **Source** (`select_source`) is a sixth media function, for players with `SELECT_SOURCE`. Its value is the
+  current input as text; a command sends the input's name. The inputs are listed in `ha.source_list` (JSON, at most
+  1000 characters), which is structural and follows HA at each reconcile.
+- **Buttons and scenes publish presses, not their state.** HA's state for `button`, `input_button` and `scene` is
+  the time of the last press. It used to be published as a text value, which says little in IoT Open. Now a press
+  is published as value 1 with the time in `msg`, and only when the time is within 30 s of now
+  (`press_value`): HA restores the last press time on start-up, and that must not look like a new press. Presses
+  are never re-sent on reconnect.
 - **The track is sent in `msg`.** The playback function sends `msg` = `Artist - Title` (title only without an
   artist, the channel for radio without a title), at most 200 characters. IoT Open logs every message, so a new
   track while playing is sent as a new message with the same value. The text stays on pause and is cleared on

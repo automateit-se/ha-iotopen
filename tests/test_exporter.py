@@ -333,3 +333,54 @@ async def test_diagnostic_entities_of_labelled_devices(
     await _setup(hass, config_entry, mock_mqtt, export_categorized=include)
     mirrored = {f["meta"].get("ha.entity_id") for f in lynx.functions[IID]} - {None}
     assert mirrored == expected
+
+
+async def test_media_player_source(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    lynx: LynxData,
+) -> None:
+    _player(hass, _label(hass), FEATURES | 2048)
+    hass.states.async_set(
+        PLAYER,
+        "on",
+        {**PLAYING, "supported_features": FEATURES | 2048, "source": "TV", "source_list": ["TV", "CD"]},
+    )
+    mqtt = await _setup(hass, config_entry, mock_mqtt)
+    source = _own_functions(lynx)["source"]
+    assert source["meta"]["ha.source_list"] == '["TV", "CD"]'
+    assert _published(mqtt, "source")[-1]["value"] == "TV"
+
+    calls = async_mock_service(hass, "media_player", "select_source")
+    mqtt.push(f"{CLIENT_ID}/set/obj/ha/media_player/living_room/source", {"value": "CD"})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert calls[0].data == {"entity_id": PLAYER, "source": "CD"}
+
+
+async def test_button_press_is_sent_once(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+) -> None:
+    label_id = _label(hass)
+    ent_reg = er.async_get(hass)
+    entry = ent_reg.async_get_or_create("button", "yamaha", "scene-tv", suggested_object_id="tv_viewing")
+    ent_reg.async_update_entity(entry.entity_id, labels={label_id})
+    # restored state after a restart: the time of an old press
+    hass.states.async_set("button.tv_viewing", (dt_util.utcnow() - timedelta(hours=2)).isoformat())
+    mqtt = await _setup(hass, config_entry, mock_mqtt)
+    topic = f"{CLIENT_ID}/obj/ha/button/tv_viewing"
+    assert not [p for t, p in mqtt.published if t == topic]
+
+    pressed = dt_util.utcnow().isoformat()
+    hass.states.async_set("button.tv_viewing", pressed)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    sent = [p for t, p in mqtt.published if t == topic]
+    assert [(p["value"], p["msg"]) for p in sent] == [(1, pressed)]
+
+    mqtt.reconnect()  # a reconnect republishes states, but not presses
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert len([p for t, p in mqtt.published if t == topic]) == 1
