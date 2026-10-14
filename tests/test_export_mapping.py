@@ -301,3 +301,36 @@ def test_suffixed_topics():
     assert not is_onoff_topic("set/obj/ha/media_player/x/power")
     assert topic_suffix("set/obj/ha/switch/kitchen") == ""
     assert entity_for_topic("set/obj/ha/media_player/x/unknown") is None
+
+
+def test_media_player_source():
+    from custom_components.iotopen.export_mapping import media_command, media_value
+
+    attrs = {"supported_features": 2048, "source": "TV", "source_list": ["TV", "CD", "Tuner"]}
+    specs = _specs(attrs, language="sv")
+    assert list(specs) == ["state", "source"]
+    source = specs["source"]
+    assert source.type == "text" and source.meta["name"] == "Living Room Källa"
+    assert source.meta["topic_write"] == "set/obj/ha/media_player/living_room/source"
+    assert source.meta["ha.source_list"] == '["TV", "CD", "Tuner"]'
+    assert "ha.source_list" not in _specs({"supported_features": 2048})["source"].meta
+    many = _specs({"supported_features": 2048, "source_list": [f"Input {i:03}" for i in range(200)]})
+    assert len(many["source"].meta["ha.source_list"]) <= 1000
+    assert media_value("source", "on", attrs) == ("TV", "")
+    assert media_value("source", "off", {}) is None
+    assert media_command("source", "CD") == ("media_player", "select_source", {"source": "CD"})
+    assert media_command("source", " ") is None
+
+
+def test_press_value():
+    from datetime import UTC, datetime, timedelta
+
+    from custom_components.iotopen.export_mapping import press_value
+
+    now = datetime(2026, 10, 14, 17, 46, 20, tzinfo=UTC)
+    pressed = (now - timedelta(seconds=5)).isoformat()
+    assert press_value(pressed, now) == (1, pressed)
+    assert press_value((now - timedelta(hours=3)).isoformat(), now) is None  # restored after a restart
+    assert press_value("unknown", now) is None
+    assert press_value("2026-10-14T17:46:15", now) is None  # no time zone: not HA's press format
+    assert press_value("pressed", now) is None

@@ -141,7 +141,7 @@ for other binary sensors. Domains without a meaningful value (`event`, `update`,
 
 ### Media players
 
-A media player (for example a Sonos speaker) becomes several functions on the same IoT Open device. The topics start
+A media player (for example a Sonos speaker or an AV receiver) becomes several functions on the same IoT Open device. The topics start
 with `obj/ha/media_player/<object_id>`, and each function carries `ha.part`:
 
 | Function | Type | Topic | Control (`set/…`) |
@@ -151,11 +151,12 @@ with `obj/ha/media_player/<object_id>`, and each function carries `ha.part`:
 | *&lt;name&gt; Mute* | `switch` | `…/mute` | `volume_mute` |
 | *&lt;name&gt; Status* | text, read only (`playing`, `paused`, `idle`, `off`, `unavailable`, …) | `…/state` | - |
 | *&lt;name&gt; Power* | `switch` | `…/power` | `turn_on` / `turn_off` |
+| *&lt;name&gt; Source* | text: the current input | `…/source` | `select_source`: send the input's name, e.g. `{"value": "TV"}` |
 
 - Only the functions the player supports are created; *Status* is always there. If the player loses a feature, the
   function is removed. An unavailable player keeps its functions.
 - The names are in Swedish when Home Assistant's language is Swedish (*Uppspelning*, *Volym*, *Mute*, *Status*,
-  *På/av*). As for other functions, a name changed in IoT Open is kept.
+  *På/av*, *Källa*). As for other functions, a name changed in IoT Open is kept.
 - **The track is in `msg`.** *Playback* sends `msg` = `Artist - Title` (only the title when there is no artist, the
   station for radio without a title), shortened to 200 characters. A new track while playing gives a new message
   with the same value, so the IoT Open log shows what was played. On pause the text stays; when the player is idle or
@@ -164,6 +165,14 @@ with `obj/ha/media_player/<object_id>`, and each function carries `ha.part`:
   published about 1 s after the last change, so dragging a slider gives one value.
 - The state follows Home Assistant: a command from IoT Open is confirmed when the player reports the new state.
 - `topic_write` is only set when *Allow IoT Open to control Home Assistant* is on.
+- *Source* carries the player's inputs in the metadata key `ha.source_list` (a JSON list, e.g. `["TV", "CD"]`), so
+  you can see what to send. It is updated when the mirror syncs (start-up, label or registry changes).
+
+### Buttons and scenes
+
+A button (`button`, `input_button`) or scene publishes value `1` when it is pressed or activated, with the time of
+the press in `msg`. Home Assistant keeps the time of the last press as the state, so a restart, a reconnect or a
+restored state does not count as a press. Send any true value (`1`, `"on"`, `true`) to `set/…` to press it.
 
 **Ownership.** Objects created by Home Assistant carry `ha.source` (the readable instance name) and `ha.source_id`
 (the stable instance id). Only objects with this instance's `ha.source_id` are created, updated or deleted by the

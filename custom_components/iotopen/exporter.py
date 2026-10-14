@@ -23,6 +23,7 @@ from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import CALLBACK_TYPE, Event, EventStateChangedData, HomeAssistant, State, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er, label_registry as lr
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
 from .export_mapping import (
@@ -32,6 +33,7 @@ from .export_mapping import (
     META_PART,
     ONOFF_SUFFIX,
     PART_VOLUME,
+    PRESS_DOMAINS,
     FunctionSpec,
     command_service,
     desired_device_meta,
@@ -49,6 +51,7 @@ from .export_mapping import (
     media_parts,
     media_value,
     meta_differs,
+    press_value,
     topic_suffix,
 )
 from .pyiotopen import (
@@ -407,6 +410,12 @@ class IoTOpenExporter:
                 if cancel := self._volume_timers.pop(topic, None):
                     cancel()
                 self._send(topic, converted, timestamp)
+                continue
+            if domain in PRESS_DOMAINS:
+                # a press is an event: never re-sent on (re)connect, and a restored press time is skipped
+                pressed = None if force else press_value(state.state, dt_util.utcnow())
+                if pressed is not None:
+                    self._send(spec.topic_read, pressed, timestamp)
                 continue
             onoff_topic = spec.meta.get("topic_read_onoff")
             if onoff_topic:  # dimmer: level on topic_read, 1/0 on topic_read_onoff

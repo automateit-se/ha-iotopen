@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+### Mirroring (Home Assistant → IoT Open)
+
+- Media players with input selection get a *Source* function (*Källa* in Swedish): the current input as text, and
+  `select_source` when an input name is sent to it. The inputs are listed in the metadata key `ha.source_list`.
+- Buttons and scenes publish value `1` when pressed or activated, with the time in `msg`, instead of the press
+  time as a text value. A restart or reconnect no longer looks like a press.
+
 ## 0.4.0
 
 ### Mirroring (Home Assistant → IoT Open)

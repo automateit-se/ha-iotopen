@@ -7,14 +7,17 @@ IoT Open conventions:
   ``ha.source_id`` = the stable HA instance id, so the
   import side can ignore them and the export side knows which objects it owns.
 * most entities become one function; a ``media_player`` becomes several (playback, volume, mute, status,
-  power) on topics ``obj/ha/media_player/<object_id>/<part>``, told apart by ``ha.part``.
+  power, source) on topics ``obj/ha/media_player/<object_id>/<part>``, told apart by ``ha.part``.
+* buttons and scenes publish 1 when pressed/activated, with the time in ``msg``.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 META_SOURCE = "ha.source"  # readable instance name, e.g. "home" (follows renames)
@@ -52,7 +55,8 @@ PART_VOLUME = "volume"
 PART_MUTE = "mute"
 PART_STATE = "state"
 PART_POWER = "power"
-MEDIA_PARTS = (PART_PLAYING, PART_VOLUME, PART_MUTE, PART_STATE, PART_POWER)
+PART_SOURCE = "source"
+MEDIA_PARTS = (PART_PLAYING, PART_VOLUME, PART_MUTE, PART_STATE, PART_POWER, PART_SOURCE)
 TOPIC_SUFFIXES = {ONOFF_SUFFIX, *MEDIA_PARTS}
 
 # MediaPlayerEntityFeature bits (homeassistant.components.media_player)
@@ -61,23 +65,29 @@ MP_VOLUME_SET = 4
 MP_VOLUME_MUTE = 8
 MP_TURN_ON = 128
 MP_TURN_OFF = 256
+MP_SELECT_SOURCE = 2048
 MP_PLAY = 16384
 _PART_FEATURES = {
     PART_PLAYING: MP_PLAY | MP_PAUSE,
     PART_VOLUME: MP_VOLUME_SET,
     PART_MUTE: MP_VOLUME_MUTE,
     PART_POWER: MP_TURN_ON | MP_TURN_OFF,
+    PART_SOURCE: MP_SELECT_SOURCE,
 }
 MEDIA_OFF_STATES = {"off", "standby"}
 MSG_MAX = 200  # track text in msg
+META_SOURCE_LIST = "ha.source_list"  # JSON list of a player's inputs, so IoT Open users know what to send
+SOURCE_LIST_MAX = 1000
 
 # function name = "<entity name> <part name>"; IoT Open is master for the name once it is created
 _PART_NAMES = {
     "en": {
-        PART_PLAYING: "Playback", PART_VOLUME: "Volume", PART_MUTE: "Mute", PART_STATE: "Status", PART_POWER: "Power"
+        PART_PLAYING: "Playback", PART_VOLUME: "Volume", PART_MUTE: "Mute", PART_STATE: "Status",
+        PART_POWER: "Power", PART_SOURCE: "Source",
     },
     "sv": {
-        PART_PLAYING: "Uppspelning", PART_VOLUME: "Volym", PART_MUTE: "Mute", PART_STATE: "Status", PART_POWER: "På/av"
+        PART_PLAYING: "Uppspelning", PART_VOLUME: "Volym", PART_MUTE: "Mute", PART_STATE: "Status",
+        PART_POWER: "På/av", PART_SOURCE: "Källa",
     },
 }
 
@@ -307,6 +317,15 @@ def _media_spec(
         meta.update(min="0", max="100", unit="%")
     elif part == PART_STATE:
         type_ = "text"
+    elif part == PART_SOURCE:
+        type_ = "text"
+        sources = [str(x) for x in attributes.get("source_list") or []]
+        listed = json.dumps(sources, ensure_ascii=False)
+        while sources and len(listed) > SOURCE_LIST_MAX:
+            sources.pop()
+            listed = json.dumps(sources, ensure_ascii=False)
+        if sources:
+            meta[META_SOURCE_LIST] = listed
     else:
         type_ = "switch"
         text_on, text_off = {
@@ -403,6 +422,9 @@ def media_value(part: str, state: str | None, attributes: dict[str, Any]) -> tup
             return max(0, min(100, round(float(level) * 100))), ""
         except (TypeError, ValueError):
             return None
+    if part == PART_SOURCE:
+        source = str(attributes.get("source") or "").strip()
+        return (_shorten(source, 255), "") if source else None
     return None
 
 
@@ -414,6 +436,9 @@ def media_command(part: str, value: Any) -> tuple[str, str, dict[str, Any]] | No
         except (TypeError, ValueError):
             return None
         return MEDIA_PLAYER, "volume_set", {"volume_level": max(0.0, min(100.0, level)) / 100}
+    if part == PART_SOURCE:
+        source = str(value).strip() if value is not None else ""
+        return (MEDIA_PLAYER, "select_source", {"source": source}) if source else None
     on = _truthy(value)
     if on is None:
         return None
@@ -424,6 +449,27 @@ def media_command(part: str, value: Any) -> tuple[str, str, dict[str, Any]] | No
     if part == PART_POWER:
         return MEDIA_PLAYER, "turn_on" if on else "turn_off", {}
     return None
+
+
+# domains whose state is the time of the last press/activation
+PRESS_DOMAINS = {"button", "input_button", "scene"}
+PRESS_RECENT = 30.0  # seconds; an older time is a restored state (e.g. after a restart), not a press
+
+
+def press_value(state: str | None, now: datetime) -> tuple[int, str] | None:
+    """A press as (1, time) when ``state`` (the time of the last press) is recent, else ``None``.
+
+    Home Assistant restores the last press time on start-up; that must not look like a new press.
+    """
+    if state is None or str(state).lower() in UNAVAILABLE_STATES:
+        return None
+    try:
+        pressed = datetime.fromisoformat(str(state))
+    except ValueError:
+        return None
+    if pressed.tzinfo is None or abs((now - pressed).total_seconds()) > PRESS_RECENT:
+        return None
+    return 1, str(state)
 
 
 def export_value(domain: str, state: str | None) -> tuple[Any, str] | None:
@@ -538,6 +584,7 @@ def meta_differs(current: dict[str, str], wanted: dict[str, str]) -> bool:
 def managed_keys_removed(current: dict[str, str], wanted: dict[str, str]) -> list[str]:
     """Keys we used to set but no longer want (e.g. topic_write after control was disabled)."""
     ours = {
+        META_SOURCE_LIST,
         "topic_write", "unit", "device_id", META_DEVICE_CLASS,
         "state_on", "state_off", "text_on", "text_off",
         "state_open", "state_closed", "text_open", "text_closed",
