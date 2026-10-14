@@ -2,10 +2,12 @@
 
 * Which entities: every entity carrying the HA label (default "IoT Open"), plus all entities of
   devices carrying that label. Entities from this integration are never exported (no loops).
-* Structure: HA device -> IoT Open device, HA entity -> IoT Open function (see export_mapping).
+* Structure: HA device -> IoT Open device, HA entity -> IoT Open function(s) (see export_mapping;
+  a media player becomes several functions on one device).
   Objects we own are marked with ``ha.source`` = HA instance id and reconciled (create / update /
   delete) whenever labels, entities or devices change, on start and on IoT Open structure events.
-* Values: every state change is published to ``<client_id>/obj/ha/<domain>/<object_id>``.
+* Values: every state change is published to ``<client_id>/obj/ha/<domain>/<object_id>``. Media player
+  functions only publish when their value or msg changed, and volume is debounced.
 * Control: ``<client_id>/set/obj/ha/...`` calls the matching HA service.
 """
 
@@ -24,9 +26,12 @@ from homeassistant.helpers.event import async_call_later, async_track_state_chan
 
 from .const import DOMAIN
 from .export_mapping import (
+    MEDIA_PLAYER,
     META_ENTITY_ID,
     META_HA_DEVICE_ID,
-    META_SOURCE,
+    META_PART,
+    ONOFF_SUFFIX,
+    PART_VOLUME,
     FunctionSpec,
     command_service,
     desired_device_meta,
@@ -36,11 +41,15 @@ from .export_mapping import (
     export_value,
     dimmer_command,
     dimmer_level,
-    function_spec,
-    is_onoff_topic,
+    function_specs,
     is_own,
     is_exportable,
+    is_media_active,
+    media_command,
+    media_parts,
+    media_value,
     meta_differs,
+    topic_suffix,
 )
 from .pyiotopen import (
     Device,
@@ -60,6 +69,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 RECONCILE_DEBOUNCE = 2.0
+VOLUME_DEBOUNCE = 1.0  # a dragged volume slider publishes only its last value
 LABEL_ICON = "iotopen:badge"  # served by frontend/iotopen-icons.js
 LABEL_COLOR = "indigo"  # closest HA palette colour to IoT Open's #0d3e53
 LABEL_DESCRIPTION = "Speglas till IoT Open / Mirrored to IoT Open"
@@ -76,13 +86,18 @@ class IoTOpenExporter:
         installation: Installation,
         label_name: str,
         allow_control: bool,
+        include_categorized: bool = False,
     ) -> None:
         self.hass = hass
         self.hub = hub
         self.installation = installation
         self.label_name = label_name
         self.allow_control = allow_control
-        self.exported: dict[str, FunctionSpec] = {}
+        # also mirror diagnostic/config entities of labelled devices (a label on the entity always counts)
+        self.include_categorized = include_categorized
+        self.exported: dict[str, list[FunctionSpec]] = {}
+        self._last_sent: dict[str, tuple[Any, str]] = {}  # topic -> (value, msg) for deduplicated parts
+        self._volume_timers: dict[str, CALLBACK_TYPE] = {}
         self._lock = asyncio.Lock()
         self._timer: CALLBACK_TYPE | None = None
         self._state_unsub: CALLBACK_TYPE | None = None
@@ -143,6 +158,9 @@ class IoTOpenExporter:
         if self._state_unsub:
             self._state_unsub()
             self._state_unsub = None
+        for cancel in self._volume_timers.values():
+            cancel()
+        self._volume_timers.clear()
         if self._task and not self._task.done():
             self._task.cancel()
 
@@ -163,7 +181,7 @@ class IoTOpenExporter:
             wanted[entry.entity_id] = entry
         for device in dr.async_entries_for_label(dev_reg, label_id):
             for entry in er.async_entries_for_device(ent_reg, device.id):
-                if entry.hidden_by is None and entry.entity_category is None:
+                if entry.hidden_by is None and (entry.entity_category is None or self.include_categorized):
                     wanted.setdefault(entry.entity_id, entry)
         return {
             eid: entry
@@ -214,10 +232,11 @@ class IoTOpenExporter:
         dev_reg = dr.async_get(self.hass)
 
         functions, devices = await asyncio.gather(client.functions(iid), client.devices(iid))
-        own_fns: dict[str, list[Function]] = {}
+        own_fns: dict[tuple[str, str], list[Function]] = {}  # (entity_id, part) -> functions
         for fn in functions:
             if is_own(fn.get_meta, source_id) and fn.get_meta(META_ENTITY_ID):
-                own_fns.setdefault(fn.get_meta(META_ENTITY_ID) or "", []).append(fn)
+                key = (fn.get_meta(META_ENTITY_ID) or "", fn.get_meta(META_PART) or "")
+                own_fns.setdefault(key, []).append(fn)
         own_devs: dict[str, list[Device]] = {}
         for dev in devices:
             if is_own(dev.get_meta, source_id) and dev.get_meta(META_HA_DEVICE_ID):
@@ -253,14 +272,20 @@ class IoTOpenExporter:
                 _LOGGER.info("IoT Open: created device %s for %s", created.id, meta["name"])
 
         # ---- functions
-        exported: dict[str, FunctionSpec] = {}
+        exported: dict[str, list[FunctionSpec]] = {}
         for entity_id, entry in wanted.items():
             state = self.hass.states.get(entity_id)
             name = (state.name if state else None) or (entry.name or entry.original_name if entry else None) or entity_id
             attrs = dict(state.attributes) if state else {}
             if entry is not None and "device_class" not in attrs and (entry.device_class or entry.original_device_class):
                 attrs["device_class"] = entry.device_class or entry.original_device_class
-            spec = function_spec(
+            keep_parts: set[str] = set()
+            if entity_id.split(".", 1)[0] == MEDIA_PLAYER and not is_media_active(state.state if state else None):
+                # off or unavailable players may report fewer features: only add functions, never delete
+                keep_parts = {part for eid, part in own_fns if eid == entity_id and part}
+                if entry is not None and "supported_features" not in attrs:
+                    attrs["supported_features"] = entry.supported_features
+            specs = function_specs(
                 entity_id,
                 str(name),
                 attrs,
@@ -268,48 +293,63 @@ class IoTOpenExporter:
                 source_id=source_id,
                 allow_control=self.allow_control,
                 iot_device_id=device_map.get(entry.device_id) if entry and entry.device_id else None,
+                language=self.hass.config.language,
+                keep_parts=keep_parts,
             )
-            existing = own_fns.pop(entity_id, [])
-            if existing:
-                keep, *dupes = existing
-                for dupe in dupes:
-                    await client.delete_function(iid, dupe.id)
-                # IoT Open is master for the type and presentation keys (name, visible, unit, text_*):
-                # manual edits in IoT Open are not reverted here (see desired_update)
-                type_, wanted_meta, removed = desired_update(keep.meta, keep.type, spec)
-                if removed or keep.type != type_ or meta_differs(keep.meta, wanted_meta):
-                    merged = {k: v for k, v in keep.meta.items() if k not in removed}
-                    merged.update(wanted_meta)
-                    await client.update_function(keep, type_=type_, meta=merged)
-            else:
-                created = await client.create_function(iid, spec.type, spec.meta)
-                _LOGGER.info("IoT Open: created function %s for %s", created.id, entity_id)
-            exported[entity_id] = spec
+            for spec in specs:
+                await self._sync_function(own_fns.pop((entity_id, spec.part), []), spec)
+            exported[entity_id] = specs
 
-        # ---- remove what is no longer labelled
-        for entity_id, fns in own_fns.items():
+        # ---- remove what is no longer labelled (or no longer supported by a media player)
+        for (entity_id, part), fns in own_fns.items():
             for fn in fns:
                 await client.delete_function(iid, fn.id)
-                _LOGGER.info("IoT Open: deleted function %s (%s no longer exported)", fn.id, entity_id)
+                _LOGGER.info(
+                    "IoT Open: deleted function %s (%s%s no longer exported)",
+                    fn.id,
+                    entity_id,
+                    f" {part}" if part else "",
+                )
         for devs in own_devs.values():
             for dev in devs:
                 await client.delete_device(iid, dev.id)
 
-        newly = set(exported) - set(self.exported)
+        before = {s.key for specs in self.exported.values() for s in specs}
+        newly = {s.entity_id for specs in exported.values() for s in specs if s.key not in before}
         self.exported = exported
         self._track_states()
         self.hub.extra_topics = {
             t for t in self.hub.extra_topics if not t.startswith(f"{self.client_id}/set/obj/ha/")
         } | {
             full_topic(self.client_id, t)
-            for s in exported.values()
+            for specs in exported.values()
+            for s in specs
             for t in (s.topic_write, s.meta.get("topic_write_onoff"))
             if t
         }
         self.hub.extra_topics.update(structure_topics(self.client_id))
         await self.hub.async_update_subscriptions()
         for entity_id in newly:
-            self._publish(entity_id, self.hass.states.get(entity_id))
+            self._publish(entity_id, self.hass.states.get(entity_id), force=True)
+
+    async def _sync_function(self, existing: list[Function], spec: FunctionSpec) -> None:
+        """Create the function, or update the one we own (and drop duplicates)."""
+        client = self.hub.client
+        iid = self.installation.id
+        if not existing:
+            created = await client.create_function(iid, spec.type, spec.meta)
+            _LOGGER.info("IoT Open: created function %s for %s", created.id, spec.key)
+            return
+        keep, *dupes = existing
+        for dupe in dupes:
+            await client.delete_function(iid, dupe.id)
+        # IoT Open is master for the type and presentation keys (name, visible, unit, text_*):
+        # manual edits in IoT Open are not reverted here (see desired_update)
+        type_, wanted_meta, removed = desired_update(keep.meta, keep.type, spec)
+        if removed or keep.type != type_ or meta_differs(keep.meta, wanted_meta):
+            merged = {k: v for k, v in keep.meta.items() if k not in removed}
+            merged.update(wanted_meta)
+            await client.update_function(keep, type_=type_, meta=merged)
 
     # ------------------------------------------------------------------ values HA -> IoT Open
     @callback
@@ -324,39 +364,90 @@ class IoTOpenExporter:
 
     @callback
     def _on_state_changed(self, event: Event[EventStateChangedData]) -> None:
-        self._publish(event.data["entity_id"], event.data["new_state"])
+        entity_id = event.data["entity_id"]
+        new_state = event.data["new_state"]
+        if (
+            entity_id.split(".", 1)[0] == MEDIA_PLAYER
+            and new_state is not None
+            and is_media_active(new_state.state)
+            and "supported_features" in new_state.attributes
+            and set(media_parts(dict(new_state.attributes))) != {s.part for s in self.exported.get(entity_id, [])}
+        ):
+            self.schedule_reconcile()  # the player gained or lost features
+        self._publish(entity_id, new_state)
 
     @callback
     def _publish_all(self) -> None:
         for entity_id in self.exported:
-            self._publish(entity_id, self.hass.states.get(entity_id))
+            self._publish(entity_id, self.hass.states.get(entity_id), force=True)
 
     @callback
-    def _publish(self, entity_id: str, state: State | None) -> None:
-        spec = self.exported.get(entity_id)
-        if spec is None or state is None or not self.hub.mqtt.connected:
+    def _publish(self, entity_id: str, state: State | None, *, force: bool = False) -> None:
+        """Publish the state of every function of ``entity_id``.
+
+        ``force`` (after a (re)connect or for new functions) skips deduplication and debouncing.
+        """
+        specs = self.exported.get(entity_id)
+        if not specs or state is None or not self.hub.mqtt.connected:
             return
         timestamp = state.last_updated.timestamp()
-        messages: list[tuple[str, Any, str]] = []
-        onoff_topic = spec.meta.get("topic_read_onoff")
-        if onoff_topic:  # dimmer: level on topic_read, 1/0 on topic_read_onoff
-            level = dimmer_level(state.state, dict(state.attributes))
-            if level is not None:
-                messages.append((spec.topic_read, level, ""))
-            converted = export_value(entity_id.split(".", 1)[0], state.state)
-            if converted is not None:
-                messages.append((onoff_topic, converted[0], converted[1]))
-        else:
-            converted = export_value(entity_id.split(".", 1)[0], state.state)
-            if converted is not None:
-                messages.append((spec.topic_read, converted[0], converted[1]))
-        for topic, value, msg in messages:
-            payload = {"value": value, "timestamp": timestamp, "msg": msg}
-            self.hub.entry.async_create_background_task(
-                self.hass,
-                self._async_publish(full_topic(self.client_id, topic), payload),
-                f"iotopen publish {entity_id}",
-            )
+        domain = entity_id.split(".", 1)[0]
+        attrs = dict(state.attributes)
+        for spec in specs:
+            if spec.part:
+                converted = media_value(spec.part, state.state, attrs)
+                if converted is None:
+                    continue
+                topic = spec.topic_read
+                if spec.part == PART_VOLUME and not force:
+                    self._debounce_volume(topic, converted, timestamp)
+                    continue
+                if not force and self._last_sent.get(topic) == converted:
+                    continue  # attribute updates (position, artwork ...) must not fill the history
+                if cancel := self._volume_timers.pop(topic, None):
+                    cancel()
+                self._send(topic, converted, timestamp)
+                continue
+            onoff_topic = spec.meta.get("topic_read_onoff")
+            if onoff_topic:  # dimmer: level on topic_read, 1/0 on topic_read_onoff
+                level = dimmer_level(state.state, attrs)
+                if level is not None:
+                    self._send(spec.topic_read, (level, ""), timestamp)
+                converted = export_value(domain, state.state)
+                if converted is not None:
+                    self._send(onoff_topic, converted, timestamp)
+            else:
+                converted = export_value(domain, state.state)
+                if converted is not None:
+                    self._send(spec.topic_read, converted, timestamp)
+
+    @callback
+    def _debounce_volume(self, topic: str, converted: tuple[Any, str], timestamp: float) -> None:
+        """Publish a volume ``VOLUME_DEBOUNCE`` s after the last change (the last value wins)."""
+        cancel = self._volume_timers.pop(topic, None)
+        if cancel is None and self._last_sent.get(topic) == converted:
+            return  # unchanged and nothing pending
+        if cancel:
+            cancel()
+
+        @callback
+        def _fire(_now: datetime) -> None:
+            self._volume_timers.pop(topic, None)
+            if self.hub.mqtt.connected and self._last_sent.get(topic) != converted:
+                self._send(topic, converted, timestamp)
+
+        self._volume_timers[topic] = async_call_later(self.hass, VOLUME_DEBOUNCE, _fire)
+
+    @callback
+    def _send(self, topic: str, converted: tuple[Any, str], timestamp: float) -> None:
+        self._last_sent[topic] = converted
+        value, msg = converted
+        payload = {"value": value, "timestamp": timestamp, "msg": msg}
+        self.hub.entry.async_create_background_task(
+            self.hass,
+            self._async_publish(full_topic(self.client_id, topic), payload),
+            f"iotopen publish {topic}",
+        )
 
     async def _async_publish(self, topic: str, payload: dict[str, Any]) -> None:
         try:
@@ -375,10 +466,14 @@ class IoTOpenExporter:
         if not event.topic.startswith("set/obj/ha/"):
             return False
         entity_id = entity_for_topic(event.topic)
-        spec = self.exported.get(entity_id or "")
+        suffix = topic_suffix(event.topic)
+        part = "" if suffix == ONOFF_SUFFIX else suffix
+        spec = next((s for s in self.exported.get(entity_id or "", []) if s.part == part), None)
         if entity_id is None or spec is None or spec.topic_write is None:
             return True
-        if spec.meta.get("topic_read_onoff") and not is_onoff_topic(event.topic):
+        if spec.part:
+            call = media_command(spec.part, event.value)
+        elif spec.meta.get("topic_read_onoff") and suffix != ONOFF_SUFFIX:
             call = dimmer_command(event.value)  # level 0-100
         else:
             call = command_service(entity_id.split(".", 1)[0], event.value)
@@ -403,6 +498,9 @@ class IoTOpenExporter:
             "installation_id": self.installation.id,
             "label": self.label_name,
             "allow_control": self.allow_control,
-            "exported": {eid: {"type": s.type, "meta": s.meta} for eid, s in self.exported.items()},
+            "include_categorized": self.include_categorized,
+            "exported": {
+                s.key: {"type": s.type, "meta": s.meta} for specs in self.exported.values() for s in specs
+            },
             "last_error": self.last_error,
         }

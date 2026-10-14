@@ -183,3 +183,121 @@ def test_old_keys_removed_when_type_changes():
     old = {"state_on": "1", "state_off": "0", "text_on": "On", "text_off": "Off", "user": "x"}
     new = function_spec("binary_sensor.door", "Door", {"device_class": "door"}, "x").meta
     assert set(managed_keys_removed(old, new)) == {"state_on", "state_off", "text_on", "text_off"}
+
+
+# ---------------------------------------------------------------- media_player
+
+SONOS = {
+    "supported_features": 16384 | 1 | 4 | 8 | 128 | 256,  # play, pause, volume set/mute, on/off
+    "device_class": "speaker",
+    "volume_level": 0.27,
+    "is_volume_muted": False,
+    "media_artist": "Some Artist",
+    "media_title": "Some Title",
+}
+
+
+def _specs(attrs, **kwargs):
+    from custom_components.iotopen.export_mapping import function_specs
+
+    return {s.part: s for s in function_specs("media_player.living_room", "Living Room", attrs, "src", **kwargs)}
+
+
+def test_media_player_is_exportable():
+    from custom_components.iotopen.export_mapping import is_exportable, is_media_active
+
+    assert is_exportable("media_player.living_room")
+    assert is_media_active("playing") and is_media_active("idle")
+    assert not is_media_active("off") and not is_media_active("unavailable") and not is_media_active(None)
+
+
+def test_media_player_specs_follow_supported_features():
+    specs = _specs(SONOS, source_id="abc", iot_device_id=7, language="sv")
+    assert list(specs) == ["playing", "volume", "mute", "state", "power"]
+    play = specs["playing"]
+    assert play.type == "switch" and play.key == "media_player.living_room/playing"
+    assert play.meta["name"] == "Living Room Uppspelning"
+    assert play.meta["topic_read"] == "obj/ha/media_player/living_room/playing"
+    assert play.meta["topic_write"] == "set/obj/ha/media_player/living_room/playing"
+    assert play.meta["ha.part"] == "playing" and play.meta["ha.entity_id"] == "media_player.living_room"
+    assert play.meta["device_id"] == "7" and play.meta["ha.source_id"] == "abc"
+    assert play.meta["ha.device_class"] == "speaker" and play.meta["ha.type"] == "switch"
+    volume = specs["volume"]
+    assert volume.type == "dimmer" and volume.meta["unit"] == "%" and volume.meta["max"] == "100"
+    assert volume.meta["name"] == "Living Room Volym"
+    assert "topic_read_onoff" not in volume.meta  # no on/off sub-topic for a volume
+    status = specs["state"]
+    assert status.type == "text" and "topic_write" not in status.meta
+    assert specs["power"].meta["name"] == "Living Room På/av"
+    assert _specs(SONOS)["playing"].meta["name"] == "Living Room Playback"
+
+
+def test_media_player_specs_minimal_and_read_only():
+    assert list(_specs({"supported_features": 0})) == ["state"]
+    assert list(_specs({})) == ["state"]
+    assert list(_specs({"supported_features": 1 | 8})) == ["playing", "mute", "state"]  # pause only counts
+    assert list(_specs({"supported_features": 128}, keep_parts={"volume", "mute"})) == [
+        "volume", "mute", "state", "power"
+    ]
+    read_only = _specs(SONOS, allow_control=False)
+    assert all("topic_write" not in s.meta for s in read_only.values())
+
+
+def test_media_track():
+    from custom_components.iotopen.export_mapping import media_track
+
+    assert media_track({"media_artist": "A", "media_title": "T"}) == "A - T"
+    assert media_track({"media_title": "T"}) == "T"
+    assert media_track({"media_channel": "Radio X"}) == "Radio X"
+    assert media_track({"media_title": "Song", "media_channel": "Radio X"}) == "Song"
+    assert media_track({"media_album_artist": "B", "media_title": "T"}) == "B - T"
+    assert media_track({}) == ""
+    long = media_track({"media_artist": "A" * 150, "media_title": "T" * 150})
+    assert len(long) == 200 and long.endswith("…")
+
+
+def test_media_value():
+    from custom_components.iotopen.export_mapping import media_value
+
+    assert media_value("playing", "playing", SONOS) == (1, "Some Artist - Some Title")
+    assert media_value("playing", "paused", SONOS) == (0, "Some Artist - Some Title")  # text kept on pause
+    assert media_value("playing", "idle", SONOS) == (0, "")
+    assert media_value("playing", "off", {}) == (0, "")
+    assert media_value("playing", "unavailable", SONOS) is None
+    assert media_value("volume", "playing", SONOS) == (27, "")
+    assert media_value("volume", "off", {}) is None  # no volume_level while off
+    assert media_value("mute", "playing", SONOS) == (0, "")
+    assert media_value("mute", "playing", {**SONOS, "is_volume_muted": True}) == (1, "")
+    assert media_value("mute", "off", {}) is None
+    assert media_value("power", "idle", SONOS) == (1, "")
+    assert media_value("power", "off", {}) == (0, "")
+    assert media_value("power", "standby", {}) == (0, "")
+    assert media_value("state", "paused", SONOS) == ("paused", "")
+    assert media_value("state", "unavailable", {}) == ("unavailable", "")  # status shows everything
+    assert media_value("state", None, {}) is None
+
+
+def test_media_command():
+    from custom_components.iotopen.export_mapping import media_command
+
+    assert media_command("playing", 1) == ("media_player", "media_play", {})
+    assert media_command("playing", "0") == ("media_player", "media_pause", {})
+    assert media_command("volume", 35) == ("media_player", "volume_set", {"volume_level": 0.35})
+    assert media_command("volume", 250) == ("media_player", "volume_set", {"volume_level": 1.0})
+    assert media_command("volume", "loud") is None
+    assert media_command("mute", "on") == ("media_player", "volume_mute", {"is_volume_muted": True})
+    assert media_command("power", 0) == ("media_player", "turn_off", {})
+    assert media_command("state", 1) is None
+
+
+def test_suffixed_topics():
+    from custom_components.iotopen.export_mapping import is_onoff_topic, topic_suffix
+
+    assert entity_for_topic("set/obj/ha/media_player/living_room/volume") == "media_player.living_room"
+    assert topic_suffix("set/obj/ha/media_player/living_room/volume") == "volume"
+    assert topic_suffix("obj/ha/media_player/living_room/state") == "state"
+    assert entity_for_topic("set/obj/ha/light/hall/onoff") == "light.hall"
+    assert is_onoff_topic("set/obj/ha/light/hall/onoff")
+    assert not is_onoff_topic("set/obj/ha/media_player/x/power")
+    assert topic_suffix("set/obj/ha/switch/kitchen") == ""
+    assert entity_for_topic("set/obj/ha/media_player/x/unknown") is None

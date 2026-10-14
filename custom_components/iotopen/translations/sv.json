@@ -83,6 +83,7 @@
           "export_installation": "Spegla Home Assistant till installation",
           "export_label": "Etikett som väljer vad som speglas",
           "export_control": "Låt IoT Open styra Home Assistant",
+          "export_categorized": "Spegla diagnostik- och konfigurationsentiteter på märkta enheter",
           "instance_name": "Den här Home Assistants namn i IoT Open",
           "import_mode": "Import från IoT Open"
         },
@@ -90,7 +91,8 @@
           "add_new_installations": "Nya installationer söks vid start och en gång i timmen.",
           "export_installation": "Entiteter och enheter med etiketten nedan skapas som devices och funktioner i den här IoT Open-installationen (obj/ha/… för status, set/obj/ha/… för styrning).",
           "export_label": "Sätt den här etiketten på entiteter eller enheter i Home Assistant. Etiketten skapas automatiskt.",
-          "export_control": "Brytare, lampor, lås, rullgardiner, nummer m.m. får topic_write (set/obj/…) som anropar Home Assistant-tjänsten.",
+          "export_control": "Brytare, lampor, lås, rullgardiner, nummer, mediaspelare m.m. får topic_write (set/obj/…) som anropar Home Assistant-tjänsten.",
+          "export_categorized": "Av: en märkt enhet speglar bara sina huvudentiteter, så t.ex. en mobils batteri- och nätverkssensorer eller en högtalares inställningar hamnar inte i IoT Open. En etikett direkt på en entitet speglas alltid.",
           "instance_name": "Ange värdet i metanyckeln ha.destination på de devices eller funktioner i IoT Open som ska visas här (det långa instans-id:t {instance_id} fungerar också; * betyder alla instanser).",
           "import_mode": "Bara märkta: endast devices/funktioner vars ha.destination anger den här instansen. Alla: varje funktion i valda installationer."
         }

@@ -56,7 +56,8 @@ If the key is revoked or the token expires, Home Assistant starts a re-authentic
 |---|---|
 | Mirror Home Assistant into installation | The IoT Open installation that labelled entities are mirrored into. `-` turns mirroring off. |
 | Label that selects what is mirrored | Default `IoT Open`. The label is created automatically. |
-| Allow IoT Open to control Home Assistant | Mirrored switches, lights, locks, covers, numbers, … get a `topic_write`. |
+| Allow IoT Open to control Home Assistant | Mirrored switches, lights, locks, covers, numbers, media players, … get a `topic_write`. |
+| Mirror diagnostic and configuration entities of labelled devices | Off by default. See [Mirroring](#mirroring-home-assistant--iot-open). |
 | This Home Assistant's name in IoT Open | Instance name used in `ha.source` and `ha.destination`. |
 | Import from IoT Open | *Only tagged* (default): only devices/functions whose `ha.destination` names this instance. *All*: every function in the selected installations. |
 
@@ -118,8 +119,13 @@ hub device for the installation is only created when some functions have no devi
 
 ## Mirroring: Home Assistant → IoT Open
 
-Put the label **IoT Open** on an entity, or on a device to mirror all of its entities (diagnostic and hidden entities
-are skipped). The label has an IoT Open icon.
+Put the label **IoT Open** on an entity, or on a device to mirror all of its entities. The label has an IoT Open icon.
+
+A label on a device skips the device's hidden entities and, by default, its diagnostic and configuration entities.
+Many devices have lots of these: a phone with the mobile app, for example, brings battery level, battery state,
+charger type, network type, Wi-Fi name and more, and a speaker brings settings such as bass, treble and loudness. To
+mirror them too, turn on *Mirror diagnostic and configuration entities of labelled devices* under *Configure*. A
+label put directly on an entity is always mirrored, whatever its category.
 
 | Home Assistant | IoT Open |
 |---|---|
@@ -131,8 +137,33 @@ are skipped). The label has an IoT Open icon.
 
 Entities are mapped to IoT Open standard types: `switch` for on/off domains, `dimmer` for dimmable lights (level on
 `obj/ha/light/<id>`, on/off on `…/onoff`), `door` and `movement` for those binary sensor classes, and `boolean_text`
-for other binary sensors. Domains without a meaningful value (`event`, `update`, `media_player`, `camera`, …) are not
-mirrored.
+for other binary sensors. Domains without a meaningful value (`event`, `update`, `camera`, …) are not mirrored.
+
+### Media players
+
+A media player (for example a Sonos speaker) becomes several functions on the same IoT Open device. The topics start
+with `obj/ha/media_player/<object_id>`, and each function carries `ha.part`:
+
+| Function | Type | Topic | Control (`set/…`) |
+|---|---|---|---|
+| *&lt;name&gt; Playback* | `switch`: 1 = playing, 0 = otherwise | `…/playing` | `media_play` / `media_pause` |
+| *&lt;name&gt; Volume* | `dimmer`, 0-100 % | `…/volume` | `volume_set` |
+| *&lt;name&gt; Mute* | `switch` | `…/mute` | `volume_mute` |
+| *&lt;name&gt; Status* | text, read only (`playing`, `paused`, `idle`, `off`, `unavailable`, …) | `…/state` | - |
+| *&lt;name&gt; Power* | `switch` | `…/power` | `turn_on` / `turn_off` |
+
+- Only the functions the player supports are created; *Status* is always there. If the player loses a feature, the
+  function is removed. An unavailable player keeps its functions.
+- The names are in Swedish when Home Assistant's language is Swedish (*Uppspelning*, *Volym*, *Mute*, *Status*,
+  *På/av*). As for other functions, a name changed in IoT Open is kept.
+- **The track is in `msg`.** *Playback* sends `msg` = `Artist - Title` (only the title when there is no artist, the
+  station for radio without a title), shortened to 200 characters. A new track while playing gives a new message
+  with the same value, so the IoT Open log shows what was played. On pause the text stays; when the player is idle or
+  off, `msg` is empty. The other functions send an empty `msg`.
+- Values are only published when they change, so position and artwork updates do not fill the history. Volume is
+  published about 1 s after the last change, so dragging a slider gives one value.
+- The state follows Home Assistant: a command from IoT Open is confirmed when the player reports the new state.
+- `topic_write` is only set when *Allow IoT Open to control Home Assistant* is on.
 
 **Ownership.** Objects created by Home Assistant carry `ha.source` (the readable instance name) and `ha.source_id`
 (the stable instance id). Only objects with this instance's `ha.source_id` are created, updated or deleted by the

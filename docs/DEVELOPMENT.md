@@ -68,7 +68,10 @@ This follows the same pattern as IoT Open's own web dashboards:
 - One installation is chosen as the mirror target in the options. It is pinned in the options, so adding a second
   installation never disables mirroring silently.
 - Selection: the HA label **IoT Open** is created automatically with an IoT Open icon. It can be put on entities or
-  on devices. A labelled device mirrors all its entities except diagnostic and hidden ones.
+  on devices. A labelled device mirrors all its entities except hidden ones and, unless the option *Mirror
+  diagnostic and configuration entities of labelled devices* is on, its diagnostic and config entities. They are
+  left out by default because many devices have lots of them (a phone's battery, charger and network sensors, a
+  speaker's tone settings). A label directly on an entity always counts.
 - HA device → IoT Open device (type `HomeAssistant`, metadata `name`, `manufacturer`, `model`, `ha.device_id`,
   `ha.source`, `ha.source_id`).
 - HA entity → function with `topic_read=obj/ha/<domain>/<object_id>`. Controllable entities also get
@@ -91,11 +94,28 @@ This follows the same pattern as IoT Open's own web dashboards:
   - HA suggests a new type (e.g. the entity got another device class): HA's type and keys are written, and the old
     texts are replaced since they no longer fit;
   - objects from before `ha.type` existed count as changed in IoT Open when the types differ.
+- **One entity can become several functions.** A `media_player` becomes up to five functions on the same IoT Open
+  device (playback, volume, mute, status, power), on `obj/ha/media_player/<object_id>/<part>`. `ha.part` names the
+  function, and ownership is decided per (`ha.entity_id`, `ha.part`), so duplicates are still cleaned up per
+  function. Only the parts allowed by `supported_features` are created (status always); a part the player no longer
+  supports is deleted. An unavailable player takes its features from the entity registry, so its functions are not
+  deleted while it is offline. Function names get a Swedish or English suffix from HA's language; IoT Open is master
+  for the name as usual. See `function_specs` and `media_*` in `export_mapping.py`.
+- **The track is sent in `msg`.** The playback function sends `msg` = `Artist - Title` (title only without an
+  artist, the channel for radio without a title), at most 200 characters. IoT Open logs every message, so a new
+  track while playing is sent as a new message with the same value. The text stays on pause and is cleared on
+  idle/off. The other media functions send an empty `msg`.
+- **Media values are deduplicated and volume is debounced.** A media player updates its attributes often
+  (position, artwork), so its functions only publish when value or msg changed. Volume is published 1 s after the
+  last change (the last value wins), so a dragged slider gives one history entry. Reconnects and new functions
+  publish immediately.
 - State changes are published as `{"value","timestamp","msg"}`. Everything is republished on reconnect.
 - `set/obj/ha/...` calls the HA service (`turn_on`/`turn_off`, `set_value`, `open`/`close`, `lock`/`unlock`,
-  `press`). Command handling never raises; failures are logged.
+  `press`, and for media players `media_play`/`media_pause`, `volume_set`, `volume_mute`). Suffixed topics
+  (`…/onoff`, `…/volume` …) are resolved with `entity_for_topic` and `topic_suffix`. The state follows HA's
+  confirmation, not the command. Command handling never raises; failures are logged.
 - The initial mirror sync runs as a background task, so it does not delay Home Assistant start-up.
-- Excluded domains: `event`, `update`, `media_player` and others whose state is not a meaningful value (see
+- Excluded domains: `event`, `update`, `camera` and others whose state is not a meaningful value (see
   `EXCLUDED_DOMAINS`).
 - Use a separate IoT Open user for the integration, so the IoT Open log shows who wrote what.
 - The API key's user needs write access to DeviceX and FunctionX in the mirror installation. Without it the
@@ -204,7 +224,7 @@ This follows the same pattern as IoT Open's own web dashboards:
    - History import via `v3beta/log` into long-term statistics.
    - A service for setting metadata.
    - Reconfigure flow (change server URL).
-   - HA tests for the exporter.
+   - More HA tests for the exporter (media players and categorized entities are covered in `tests/test_exporter.py`).
 8. **Towards HA core**:
    - Reach bronze on the quality scale.
    - 100 % test coverage for the config flow.

@@ -54,6 +54,7 @@ from .const import (
     CONF_ADD_NEW_INSTALLATIONS,
     CONF_AUTH_METHOD,
     CONF_CODE,
+    CONF_EXPORT_CATEGORIZED,
     CONF_EXPORT_CONTROL,
     CONF_IMPORT_MODE,
     CONF_INSTALLATION_ID,
@@ -400,6 +401,7 @@ class IoTOpenOptionsFlow(OptionsFlow):
                         CONF_EXPORT_INSTALLATION: user_input[CONF_EXPORT_INSTALLATION],
                         CONF_EXPORT_LABEL: user_input[CONF_EXPORT_LABEL].strip() or DEFAULT_EXPORT_LABEL,
                         CONF_EXPORT_CONTROL: user_input[CONF_EXPORT_CONTROL],
+                        CONF_EXPORT_CATEGORIZED: user_input[CONF_EXPORT_CATEGORIZED],
                         CONF_INSTANCE_NAME: slugify(user_input[CONF_INSTANCE_NAME]) or "home",
                         CONF_IMPORT_MODE: user_input[CONF_IMPORT_MODE],
                     }
@@ -443,6 +445,9 @@ class IoTOpenOptionsFlow(OptionsFlow):
                 ): TextSelector(),
                 vol.Required(
                     CONF_EXPORT_CONTROL, default=entry.options.get(CONF_EXPORT_CONTROL, True)
+                ): BooleanSelector(),
+                vol.Required(
+                    CONF_EXPORT_CATEGORIZED, default=entry.options.get(CONF_EXPORT_CATEGORIZED, False)
                 ): BooleanSelector(),
                 vol.Required(
                     CONF_INSTANCE_NAME,
