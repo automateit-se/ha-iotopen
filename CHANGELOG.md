@@ -22,6 +22,11 @@ All notable changes to this project are documented here. The format follows
 
 - Home Assistant tests for the exporter (media players, commands, debounce, categorized entities).
 
+### Releases
+
+- Running the *Release* workflow manually now creates a draft release (notes and `iotopen.zip` included) that is
+  published with one click on GitHub.
+
 ## 0.3.2
 
 ### Brand images

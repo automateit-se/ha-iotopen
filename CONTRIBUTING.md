@@ -65,11 +65,14 @@ logger:
 
 1. Move the *Unreleased* entries in `CHANGELOG.md` under a new version heading.
 2. Set the same version in `custom_components/iotopen/manifest.json` (for example `0.3.1`).
-3. Commit and merge to `main`. Then either run *Actions → Release → Run workflow* on `main`, which creates the
-   tag `v0.3.1` from `manifest.json`, or tag the merged commit yourself and push the tag:
-   `git tag v0.3.1 && git push origin v0.3.1`.
-4. The *Release* workflow checks that the tag matches `manifest.json`, publishes the GitHub release with the
-   changelog section as release notes and attaches `iotopen.zip`. HACS users see the new version as an update.
+3. Commit and merge to `main`.
+4. Run *Actions → Release → Run workflow* on `main`. It checks the version in `manifest.json`, takes the changelog
+   section as release notes, attaches `iotopen.zip` and creates a **draft** release `v0.3.1`.
+5. Open the draft under *Releases*, read it through and click *Publish release*. The tag is created then, and HACS
+   users see the new version as an update.
+
+Untick *draft* in step 4 to publish at once. Pushing a tag yourself (`git tag v0.3.1 && git push origin v0.3.1`)
+also publishes directly.
 
 Versioning follows [semantic versioning](https://semver.org/): bump the minor version for new features and the
 patch version for fixes. Until 1.0, options and metadata keys may still change; mention that in the release notes.

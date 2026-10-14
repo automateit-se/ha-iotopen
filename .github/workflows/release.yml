@@ -1,14 +1,20 @@
 name: Release
 
-# Publish a release in one of two ways:
-# - push a tag such as v0.3.1, or
-# - run this workflow manually on main (Actions → Release → Run workflow); it creates the tag
-#   v<version> from manifest.json.
-# The release notes are the matching "## 0.3.1" section of CHANGELOG.md, and iotopen.zip is attached.
+# Make a release in one of two ways:
+# - run this workflow manually on main (Actions → Release → Run workflow). It takes the version from
+#   manifest.json and creates a draft release v<version>; publish it on GitHub (the tag is created then).
+#   Untick "draft" to publish right away.
+# - push a tag such as v0.4.0 to publish directly.
+# The release notes are the matching "## 0.4.0" section of CHANGELOG.md, and iotopen.zip is attached.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      draft:
+        description: "Create a draft (publish it yourself on GitHub)"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -16,6 +22,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
       - name: Check version and extract release notes
@@ -39,6 +47,19 @@ jobs:
               exit 1
             fi
           fi
+          # a release for this tag may exist already: a draft made by this workflow, or the tag push that
+          # publishing that draft causes
+          EXISTING="$(gh release list --limit 100 --json tagName,isDraft \
+            --jq ".[] | select(.tagName == \"v$VERSION\") | if .isDraft then \"draft\" else \"published\" end")"
+          if [ -n "$EXISTING" ]; then
+            if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+              echo "Release v$VERSION is already $EXISTING; nothing to do."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::A $EXISTING release v$VERSION already exists. Publish or delete it first."
+            exit 1
+          fi
           awk -v v="$VERSION" '
             /^## / { if (found) exit; if ($2 == v) { found = 1; next } }
             found { print }
@@ -50,11 +71,14 @@ jobs:
           cat release_notes.md
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
       - name: Zip integration
+        if: steps.version.outputs.skip != 'true'
         run: cd custom_components/iotopen && zip -r ../../iotopen.zip .
       - uses: softprops/action-gh-release@v2
+        if: steps.version.outputs.skip != 'true'
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           target_commitish: ${{ github.sha }}
           name: ${{ steps.version.outputs.tag }}
           body_path: release_notes.md
           files: iotopen.zip
+          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft }}
