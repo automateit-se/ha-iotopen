@@ -73,7 +73,7 @@ jobs:
       - name: Zip integration
         if: steps.version.outputs.skip != 'true'
         run: cd custom_components/iotopen && zip -r ../../iotopen.zip .
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         if: steps.version.outputs.skip != 'true'
         with:
           tag_name: ${{ steps.version.outputs.tag }}
