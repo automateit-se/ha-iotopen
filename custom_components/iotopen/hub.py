@@ -55,6 +55,7 @@ from .pyiotopen import (
 
 from .const import (
     CONF_ADD_NEW_INSTALLATIONS,
+    CONF_EXPORT_CATEGORIZED,
     CONF_EXPORT_CONTROL,
     CONF_IMPORT_MODE,
     CONF_INSTALLATION_ID,
@@ -140,6 +141,7 @@ class IoTOpenHub:
             self.export_installation_id,
             self.entry.options.get(CONF_EXPORT_LABEL, DEFAULT_EXPORT_LABEL),
             bool(self.entry.options.get(CONF_EXPORT_CONTROL, True)),
+            bool(self.entry.options.get(CONF_EXPORT_CATEGORIZED, False)),
             self.instance_name,
             self.import_mode,
         )
@@ -315,6 +317,7 @@ class IoTOpenHub:
             installation,
             self.entry.options.get(CONF_EXPORT_LABEL, DEFAULT_EXPORT_LABEL),
             bool(self.entry.options.get(CONF_EXPORT_CONTROL, True)),
+            bool(self.entry.options.get(CONF_EXPORT_CATEGORIZED, False)),
         )
         try:
             await self.exporter.async_start()

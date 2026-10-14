@@ -5,6 +5,28 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+## 0.4.0
+
+### Mirroring (Home Assistant → IoT Open)
+
+- Media players are mirrored. A player (for example a Sonos speaker) becomes up to five functions on the same IoT
+  Open device: playback, volume, mute, status and power, on `obj/ha/media_player/<object_id>/<part>`. Only the
+  functions the player supports are created, and they are removed if the player loses the feature.
+- The playback function sends the current track in `msg` (`Artist - Title`), so the IoT Open log shows what was
+  played. Media values are only sent when they change, and volume is debounced by about 1 s.
+- New option *Mirror diagnostic and configuration entities of labelled devices* (off by default). Without it, a
+  labelled device still leaves out entities such as a phone's battery and network sensors.
+- Function names of media players are in Swedish when Home Assistant's language is Swedish.
+
+### Tests
+
+- Home Assistant tests for the exporter (media players, commands, debounce, categorized entities).
+
+### Releases
+
+- Running the *Release* workflow manually now creates a draft release (notes and `iotopen.zip` included) that is
+  published with one click on GitHub.
+
 ## 0.3.2
 
 ### Brand images

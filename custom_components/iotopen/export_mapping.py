@@ -6,11 +6,14 @@ IoT Open conventions:
 * functions/devices created by this integration carry ``ha.source`` = the instance name and
   ``ha.source_id`` = the stable HA instance id, so the
   import side can ignore them and the export side knows which objects it owns.
+* most entities become one function; a ``media_player`` becomes several (playback, volume, mute, status,
+  power) on topics ``obj/ha/media_player/<object_id>/<part>``, told apart by ``ha.part``.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -20,6 +23,7 @@ META_ENTITY_ID = "ha.entity_id"
 META_HA_DEVICE_ID = "ha.device_id"
 META_DEVICE_CLASS = "ha.device_class"  # keeps HA's class for types like boolean_text
 META_HA_TYPE = "ha.type"  # the type HA suggested; a different function type means it was changed in IoT Open
+META_PART = "ha.part"  # which function of a multi-function entity (media_player); absent otherwise
 
 DOOR_CLASSES = {"door", "window", "garage_door", "opening"}
 MOVEMENT_CLASSES = {"motion", "occupancy", "presence", "moving"}
@@ -36,10 +40,45 @@ WRITE_PREFIX = "set/"
 
 UNAVAILABLE_STATES = {"unavailable", "unknown", "none", ""}
 
-# domains whose state is not a meaningful value (timestamps, firmware info, media ...)
+# domains whose state is not a meaningful value (timestamps, firmware info ...)
 EXCLUDED_DOMAINS = {
     "event", "update", "image", "camera", "tts", "stt", "conversation", "notify",
-    "wake_word", "assist_satellite", "ai_task", "todo", "calendar", "media_player", "remote",
+    "wake_word", "assist_satellite", "ai_task", "todo", "calendar", "remote",
+}
+
+MEDIA_PLAYER = "media_player"
+PART_PLAYING = "playing"
+PART_VOLUME = "volume"
+PART_MUTE = "mute"
+PART_STATE = "state"
+PART_POWER = "power"
+MEDIA_PARTS = (PART_PLAYING, PART_VOLUME, PART_MUTE, PART_STATE, PART_POWER)
+TOPIC_SUFFIXES = {ONOFF_SUFFIX, *MEDIA_PARTS}
+
+# MediaPlayerEntityFeature bits (homeassistant.components.media_player)
+MP_PAUSE = 1
+MP_VOLUME_SET = 4
+MP_VOLUME_MUTE = 8
+MP_TURN_ON = 128
+MP_TURN_OFF = 256
+MP_PLAY = 16384
+_PART_FEATURES = {
+    PART_PLAYING: MP_PLAY | MP_PAUSE,
+    PART_VOLUME: MP_VOLUME_SET,
+    PART_MUTE: MP_VOLUME_MUTE,
+    PART_POWER: MP_TURN_ON | MP_TURN_OFF,
+}
+MEDIA_OFF_STATES = {"off", "standby"}
+MSG_MAX = 200  # track text in msg
+
+# function name = "<entity name> <part name>"; IoT Open is master for the name once it is created
+_PART_NAMES = {
+    "en": {
+        PART_PLAYING: "Playback", PART_VOLUME: "Volume", PART_MUTE: "Mute", PART_STATE: "Status", PART_POWER: "Power"
+    },
+    "sv": {
+        PART_PLAYING: "Uppspelning", PART_VOLUME: "Volym", PART_MUTE: "Mute", PART_STATE: "Status", PART_POWER: "På/av"
+    },
 }
 
 
@@ -81,6 +120,16 @@ class FunctionSpec:
     def topic_write(self) -> str | None:
         return self.meta.get("topic_write")
 
+    @property
+    def part(self) -> str:
+        """``""`` for one-function entities, else e.g. ``volume``."""
+        return self.meta.get(META_PART, "")
+
+    @property
+    def key(self) -> str:
+        """Unique per function: ``media_player.x/volume`` or just the entity id."""
+        return f"{self.entity_id}/{self.part}" if self.part else self.entity_id
+
 
 def topic_for(entity_id: str) -> str:
     """``sensor.living_room`` -> ``obj/ha/sensor/living_room``."""
@@ -88,24 +137,38 @@ def topic_for(entity_id: str) -> str:
     return f"{TOPIC_PREFIX}/{_SAFE.sub('_', domain.lower())}/{_SAFE.sub('_', object_id.lower())}"
 
 
+def _split_topic(topic: str) -> tuple[str, str] | None:
+    """``set/obj/ha/media_player/x/volume`` -> (``media_player.x``, ``volume``); suffix ``""`` if none."""
+    if topic.startswith(WRITE_PREFIX):
+        topic = topic[len(WRITE_PREFIX) :]
+    parts = topic.rstrip("/").split("/")
+    suffix = ""
+    if len(parts) == 5 and parts[4] in TOPIC_SUFFIXES:
+        suffix = parts.pop()
+    if len(parts) != 4 or f"{parts[0]}/{parts[1]}" != TOPIC_PREFIX:
+        return None
+    return f"{parts[2]}.{parts[3]}", suffix
+
+
 def entity_for_topic(topic: str) -> str | None:
     """Inverse of :func:`topic_for` (``obj/ha/sensor/x`` or ``set/obj/ha/sensor/x`` -> ``sensor.x``).
 
-    ``.../onoff`` (dimmer on/off topics) map to the same entity.
+    Suffixed topics (``.../onoff`` of a dimmer, ``.../volume`` etc. of a media player) map to the
+    same entity; :func:`topic_suffix` tells them apart.
     """
-    if topic.startswith(WRITE_PREFIX):
-        topic = topic[len(WRITE_PREFIX) :]
-    parts = topic.split("/")
-    if len(parts) == 5 and parts[4] == ONOFF_SUFFIX:
-        parts = parts[:4]
-    if len(parts) != 4 or f"{parts[0]}/{parts[1]}" != TOPIC_PREFIX:
-        return None
-    return f"{parts[2]}.{parts[3]}"
+    split = _split_topic(topic)
+    return split[0] if split else None
+
+
+def topic_suffix(topic: str) -> str:
+    """``set/obj/ha/media_player/x/volume`` -> ``volume``; ``""`` for unsuffixed topics."""
+    split = _split_topic(topic)
+    return split[1] if split else ""
 
 
 def is_onoff_topic(topic: str) -> bool:
     """``set/obj/ha/light/x/onoff``."""
-    return topic.rstrip("/").endswith(f"/{ONOFF_SUFFIX}")
+    return topic_suffix(topic) == ONOFF_SUFFIX
 
 
 def dimmer_level(state: str | None, attributes: dict[str, Any]) -> int | None:
@@ -201,6 +264,166 @@ def function_spec(
         meta["topic_write"] = f"{WRITE_PREFIX}{topic}"
     meta[META_HA_TYPE] = type_
     return FunctionSpec(entity_id=entity_id, type=type_, meta=meta)
+
+
+def media_parts(attributes: dict[str, Any], keep: Iterable[str] = ()) -> list[str]:
+    """Functions a media player gets: the ones its supported_features allow, plus status (always).
+
+    ``keep`` adds parts that must stay although the features do not list them (a player that is off or
+    unavailable may report fewer features; its functions must not be deleted and recreated).
+    """
+    try:
+        features = int(attributes.get("supported_features") or 0)
+    except (TypeError, ValueError):
+        features = 0
+    kept = set(keep)
+    return [p for p in MEDIA_PARTS if p == PART_STATE or p in kept or features & _PART_FEATURES[p]]
+
+
+def is_media_active(state: str | None) -> bool:
+    """Whether a media player's features can be trusted (not off, standby or unavailable)."""
+    return state is not None and str(state).lower() not in UNAVAILABLE_STATES | MEDIA_OFF_STATES
+
+
+def part_name(part: str, language: str | None = None) -> str:
+    """Name suffix of a media player function, in Swedish or English."""
+    names = _PART_NAMES["sv"] if (language or "").lower().startswith("sv") else _PART_NAMES["en"]
+    return names[part]
+
+
+def _media_spec(
+    entity_id: str,
+    name: str,
+    part: str,
+    attributes: dict[str, Any],
+    base: dict[str, str],
+    allow_control: bool,
+    language: str | None,
+) -> FunctionSpec:
+    topic = f"{topic_for(entity_id)}/{part}"
+    meta = {**base, "name": f"{name} {part_name(part, language)}", "topic_read": topic, META_PART: part}
+    if part == PART_VOLUME:
+        type_ = "dimmer"
+        meta.update(min="0", max="100", unit="%")
+    elif part == PART_STATE:
+        type_ = "text"
+    else:
+        type_ = "switch"
+        text_on, text_off = {
+            PART_PLAYING: ("Playing", "Not playing"),
+            PART_MUTE: ("Muted", "Unmuted"),
+            PART_POWER: ("On", "Off"),
+        }[part]
+        meta.update(state_on="1", state_off="0", text_on=text_on, text_off=text_off)
+    if allow_control and part != PART_STATE:
+        meta["topic_write"] = f"{WRITE_PREFIX}{topic}"
+    meta[META_HA_TYPE] = type_
+    return FunctionSpec(entity_id=entity_id, type=type_, meta=meta)
+
+
+def function_specs(
+    entity_id: str,
+    name: str,
+    attributes: dict[str, Any],
+    source: str,
+    *,
+    source_id: str | None = None,
+    allow_control: bool = True,
+    iot_device_id: int | None = None,
+    language: str | None = None,
+    keep_parts: Iterable[str] = (),
+) -> list[FunctionSpec]:
+    """All IoT Open functions for an entity: one, or several for a media player (see :func:`media_parts`)."""
+    if entity_id.split(".", 1)[0] != MEDIA_PLAYER:
+        return [
+            function_spec(
+                entity_id,
+                name,
+                attributes,
+                source,
+                source_id=source_id,
+                allow_control=allow_control,
+                iot_device_id=iot_device_id,
+            )
+        ]
+    base: dict[str, str] = {META_SOURCE: source, META_ENTITY_ID: entity_id, "visible": "true"}
+    if source_id:
+        base[META_SOURCE_ID] = source_id
+    if iot_device_id is not None:
+        base["device_id"] = str(iot_device_id)
+    if attributes.get("device_class"):
+        base[META_DEVICE_CLASS] = str(attributes["device_class"])
+    return [
+        _media_spec(entity_id, name, part, attributes, base, allow_control, language)
+        for part in media_parts(attributes, keep_parts)
+    ]
+
+
+def _shorten(text: str, limit: int = MSG_MAX) -> str:
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def media_track(attributes: dict[str, Any]) -> str:
+    """``Artist - Title`` (only the title when there is no artist; the channel for radio without a title)."""
+
+    def attr(key: str) -> str:
+        return str(attributes.get(key) or "").strip()
+
+    artist = attr("media_artist") or attr("media_album_artist")
+    title = attr("media_title")
+    if artist and title:
+        text = f"{artist} - {title}"
+    else:
+        text = title or artist or attr("media_channel")
+    return _shorten(text)
+
+
+def media_value(part: str, state: str | None, attributes: dict[str, Any]) -> tuple[Any, str] | None:
+    """Value and msg for one media player function. ``None`` when nothing should be published.
+
+    Only playback carries a msg: the track while playing or paused, empty otherwise.
+    """
+    if state is None:
+        return None
+    raw = str(state)
+    if part == PART_STATE:
+        return _shorten(raw, 255), ""
+    if raw.lower() in UNAVAILABLE_STATES:
+        return None
+    if part == PART_PLAYING:
+        return (1 if raw == "playing" else 0), (media_track(attributes) if raw in ("playing", "paused") else "")
+    if part == PART_POWER:
+        return (0 if raw in MEDIA_OFF_STATES else 1), ""
+    if part == PART_MUTE:
+        muted = attributes.get("is_volume_muted")
+        return None if muted is None else (1 if muted else 0, "")
+    if part == PART_VOLUME:
+        level = attributes.get("volume_level")
+        try:
+            return max(0, min(100, round(float(level) * 100))), ""
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def media_command(part: str, value: Any) -> tuple[str, str, dict[str, Any]] | None:
+    """Command on a media player function -> (domain, service, data)."""
+    if part == PART_VOLUME:
+        try:
+            level = float(value)
+        except (TypeError, ValueError):
+            return None
+        return MEDIA_PLAYER, "volume_set", {"volume_level": max(0.0, min(100.0, level)) / 100}
+    on = _truthy(value)
+    if on is None:
+        return None
+    if part == PART_PLAYING:
+        return MEDIA_PLAYER, "media_play" if on else "media_pause", {}
+    if part == PART_MUTE:
+        return MEDIA_PLAYER, "volume_mute", {"is_volume_muted": on}
+    if part == PART_POWER:
+        return MEDIA_PLAYER, "turn_on" if on else "turn_off", {}
+    return None
 
 
 def export_value(domain: str, state: str | None) -> tuple[Any, str] | None:

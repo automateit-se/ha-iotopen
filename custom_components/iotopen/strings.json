@@ -83,6 +83,7 @@
           "export_installation": "Mirror Home Assistant into installation",
           "export_label": "Label that selects what is mirrored",
           "export_control": "Allow IoT Open to control Home Assistant",
+          "export_categorized": "Mirror diagnostic and configuration entities of labelled devices",
           "instance_name": "This Home Assistant's name in IoT Open",
           "import_mode": "Import from IoT Open"
         },
@@ -90,7 +91,8 @@
           "add_new_installations": "New installations are looked for at start-up and once an hour.",
           "export_installation": "Entities and devices with the label below are created as devices and functions in this IoT Open installation (obj/ha/… for status, set/obj/ha/… for control).",
           "export_label": "Put this label on entities or devices in Home Assistant. The label is created automatically.",
-          "export_control": "Switches, lights, locks, covers, numbers etc. get a topic_write (set/obj/…) that calls the Home Assistant service.",
+          "export_control": "Switches, lights, locks, covers, numbers, media players etc. get a topic_write (set/obj/…) that calls the Home Assistant service.",
+          "export_categorized": "Off: a labelled device only mirrors its main entities, so e.g. a phone's battery and network sensors or a speaker's settings stay out of IoT Open. A label put directly on an entity is always mirrored.",
           "instance_name": "Use this value in the metadata key ha.destination on IoT Open devices or functions that should appear here (the long instance id {instance_id} also works; * means all instances).",
           "import_mode": "Only tagged: only devices/functions whose ha.destination names this instance. All: every function in the selected installations."
         }

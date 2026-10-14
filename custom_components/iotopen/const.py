@@ -17,6 +17,8 @@ CONF_CODE: Final = "code"
 CONF_EXPORT_INSTALLATION: Final = "export_installation"
 CONF_EXPORT_LABEL: Final = "export_label"
 CONF_EXPORT_CONTROL: Final = "export_control"
+# also mirror diagnostic/config entities of labelled devices (off: e.g. a phone's battery sensors stay out)
+CONF_EXPORT_CATEGORIZED: Final = "export_categorized"
 EXPORT_NONE: Final = "none"
 DEFAULT_EXPORT_LABEL: Final = "IoT Open"
 CONF_INSTANCE_NAME: Final = "instance_name"
