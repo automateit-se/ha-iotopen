@@ -207,4 +207,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how to work on the code and make a re
 Report bugs and ideas under [Issues](https://github.com/automateit-se/ha-iotopen/issues). Please attach the
 diagnostics file (see above) to bug reports.
 
-Licensed under [Apache 2.0](LICENSE).
+Licensed under [MIT](LICENSE).
