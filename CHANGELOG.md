@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+- The project is now licensed under the MIT License (previously Apache 2.0), as are AutomateIT's other IoT Open projects.
+
 ## 0.4.0
 
 ### Mirroring (Home Assistant → IoT Open)

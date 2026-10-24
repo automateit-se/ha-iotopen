@@ -7,7 +7,7 @@ name = "pyiotopen"
 version = "0.1.0"
 description = "Async Python client for IoT Open (Lynx): REST API and live MQTT-over-WebSocket values"
 readme = "README.md"
-license = "Apache-2.0"
+license = "MIT"
 requires-python = ">=3.11"
 authors = [{ name = "AutomateIT", email = "development@automateit.se" }]
 keywords = ["iot open", "lynx", "home assistant", "mqtt", "asyncio"]
