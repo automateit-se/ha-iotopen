@@ -1,0 +1,116 @@
+# Wall panel dashboard for Home Assistant (for example a Shelly Wall Display X2i).
+# Only built-in cards, no custom cards or HACS. Replace the example entity ids with your own
+# (Settings > Devices & services > Entities). See README.md.
+title: Väggpanel
+views:
+  - title: Hem
+    path: hem
+    icon: mdi:home
+    type: sections
+    max_columns: 3
+    # shown only when a door is open
+    badges:
+      - type: entity
+        entity: binary_sensor.ytterdorr
+        show_name: true
+        color: red
+        visibility:
+          - condition: state
+            entity: binary_sensor.ytterdorr
+            state: "on"
+      - type: entity
+        entity: binary_sensor.altandorr
+        show_name: true
+        color: red
+        visibility:
+          - condition: state
+            entity: binary_sensor.altandorr
+            state: "on"
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading: Belysning
+            icon: mdi:lightbulb-group
+          - type: tile
+            entity: light.vardagsrum
+            name: Vardagsrum
+            features_position: bottom
+            features:
+              - type: light-brightness
+          - type: tile
+            entity: light.kok
+            name: Kök
+            features_position: bottom
+            features:
+              - type: light-brightness
+          - type: tile
+            entity: light.hall
+            name: Hall
+            tap_action:
+              action: toggle
+          - type: tile
+            entity: switch.utebelysning
+            name: Ute
+            tap_action:
+              action: toggle
+          - type: button
+            name: Släck allt
+            icon: mdi:lightbulb-group-off
+            show_state: false
+            tap_action:
+              action: perform-action
+              perform_action: light.turn_off
+              target:
+                entity_id:
+                  - light.vardagsrum
+                  - light.kok
+                  - light.hall
+              confirmation:
+                text: Släcka alla lampor?
+      - type: grid
+        cards:
+          - type: heading
+            heading: Klimat
+            icon: mdi:thermostat
+          - type: thermostat
+            entity: climate.vardagsrum
+            name: Vardagsrum
+            features:
+              - type: climate-hvac-modes
+                hvac_modes:
+                  - heat
+                  - "off"
+          - type: tile
+            entity: climate.badrum
+            name: Badrum
+            features_position: bottom
+            features:
+              - type: target-temperature
+      - type: grid
+        cards:
+          - type: heading
+            heading: Dörrar
+            icon: mdi:door
+          - type: tile
+            entity: binary_sensor.ytterdorr
+            name: Ytterdörr
+          - type: tile
+            entity: binary_sensor.altandorr
+            name: Altandörr
+          - type: tile
+            entity: lock.ytterdorr
+            name: Lås
+      - type: grid
+        cards:
+          - type: heading
+            heading: Musik
+            icon: mdi:speaker
+          - type: media-control
+            entity: media_player.vardagsrum
+          - type: tile
+            entity: media_player.kok
+            name: Kök
+            features_position: bottom
+            features:
+              - type: media-player-volume-slider

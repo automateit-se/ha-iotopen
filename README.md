@@ -186,6 +186,9 @@ A thermostat (`climate`) becomes up to four functions on the same IoT Open devic
   (*Temperatur*, *Börvärde*, *Läge*, *Drift*).
 - The IoT Open Dashboard (0.12.0 or later) shows the four functions as one thermostat widget.
 
+[`examples/wall-display`](examples/wall-display) is a Home Assistant dashboard for a wall display (lights,
+thermostats, doors, Sonos) made with Home Assistant's own cards, and shows how the same entities appear in IoT Open.
+
 **Ownership.** Objects created by Home Assistant carry `ha.source` (the readable instance name) and `ha.source_id`
 (the stable instance id). Only objects with this instance's `ha.source_id` are created, updated or deleted by the
 mirror. Your own metadata keys are left alone.
