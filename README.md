@@ -58,6 +58,7 @@ If the key is revoked or the token expires, Home Assistant starts a re-authentic
 | Label that selects what is mirrored | Default `IoT Open`. The label is created automatically. |
 | Allow IoT Open to control Home Assistant | Mirrored switches, lights, locks, covers, numbers, media players, … get a `topic_write`. |
 | Mirror diagnostic and configuration entities of labelled devices | Off by default. See [Mirroring](#mirroring-home-assistant--iot-open). |
+| Send values and receive commands via | *IoT Open (cloud)* (default) or *Local broker*. See [Local broker](#local-broker-mirroring-without-internet). |
 | This Home Assistant's name in IoT Open | Instance name used in `ha.source` and `ha.destination`. |
 | Import from IoT Open | *Only tagged* (default): only devices/functions whose `ha.destination` names this instance. *All*: every function in the selected installations. |
 
@@ -176,6 +177,26 @@ Delete a key in IoT Open to get Home Assistant's value back. Structural keys (`t
 `min`/`max`) always follow Home Assistant.
 
 Tip: use a separate IoT Open user for the integration, so the IoT Open log shows who changed what.
+
+### Local broker: mirroring without internet
+
+By default, mirrored values and commands go over IoT Open's cloud MQTT. When the mirror installation has an
+**edge client on the same network** (for example an IoT Open Raspberry Pi), choose *Local broker* under *Configure* to
+send them through the edge client's own broker instead:
+
+- Home Assistant publishes `obj/ha/…` on the edge client's broker (without the client id prefix) and listens to
+  `set/obj/ha/#` there.
+- The edge client's bridge forwards the values to IoT Open and brings commands from IoT Open down, exactly as for the
+  edge client's own apps. Each command arrives once.
+- The [local dashboard](https://github.com/automateit-se/edge-app-local-dashboard) and Home Assistant keep talking to
+  each other **without internet**: values update and switches work. While the bridge is down, IoT Open's history may
+  get a gap (the broker only queues a limited number of messages).
+- Devices and functions are still created and changed over IoT Open's REST API, so labelling new entities needs
+  internet.
+
+Requirements: Home Assistant's [MQTT integration](https://www.home-assistant.io/integrations/mqtt/), connected to the
+edge client's broker (for example `localhost:1883` when Home Assistant runs on the edge client itself). The option
+cannot be chosen without it. Importing functions from IoT Open still uses the cloud.
 
 ## Diagnostics
 

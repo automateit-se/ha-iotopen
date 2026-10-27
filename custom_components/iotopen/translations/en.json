@@ -84,6 +84,7 @@
           "export_label": "Label that selects what is mirrored",
           "export_control": "Allow IoT Open to control Home Assistant",
           "export_categorized": "Mirror diagnostic and configuration entities of labelled devices",
+          "export_transport": "Send values and receive commands via",
           "instance_name": "This Home Assistant's name in IoT Open",
           "import_mode": "Import from IoT Open"
         },
@@ -93,13 +94,15 @@
           "export_label": "Put this label on entities or devices in Home Assistant. The label is created automatically.",
           "export_control": "Switches, lights, locks, covers, numbers, media players etc. get a topic_write (set/obj/…) that calls the Home Assistant service.",
           "export_categorized": "Off: a labelled device only mirrors its main entities, so e.g. a phone's battery and network sensors or a speaker's settings stay out of IoT Open. A label put directly on an entity is always mirrored.",
+          "export_transport": "IoT Open (cloud): over the internet, needs nothing else. Local broker: over Home Assistant's MQTT integration, which must be connected to the edge client's broker in the mirror installation (for example an IoT Open Raspberry Pi). The edge client's bridge forwards values to IoT Open, and the local dashboard and Home Assistant keep talking to each other without internet. Devices and functions are still created over the internet.",
           "instance_name": "Use this value in the metadata key ha.destination on IoT Open devices or functions that should appear here (the long instance id {instance_id} also works; * means all instances).",
           "import_mode": "Only tagged: only devices/functions whose ha.destination names this instance. All: every function in the selected installations."
         }
       }
     },
     "error": {
-      "no_selection": "Select at least one installation"
+      "no_selection": "Select at least one installation",
+      "mqtt_required": "Local broker needs Home Assistant's MQTT integration, connected to the edge client's broker. Add MQTT first."
     },
     "abort": {
       "invalid_auth": "Invalid credentials or API key",
@@ -117,6 +120,12 @@
       "options": {
         "tagged": "Only tagged with ha.destination (recommended)",
         "all": "All functions in the selected installations"
+      }
+    },
+    "export_transport": {
+      "options": {
+        "cloud": "IoT Open (cloud)",
+        "local": "Local broker (edge client, works without internet)"
       }
     }
   },

@@ -55,6 +55,7 @@ from .const import (
     CONF_AUTH_METHOD,
     CONF_CODE,
     CONF_EXPORT_CATEGORIZED,
+    CONF_EXPORT_TRANSPORT,
     CONF_EXPORT_CONTROL,
     CONF_IMPORT_MODE,
     CONF_INSTALLATION_ID,
@@ -67,7 +68,10 @@ from .const import (
     CONF_EXPORT_INSTALLATION,
     CONF_EXPORT_LABEL,
     DEFAULT_EXPORT_LABEL,
+    DEFAULT_EXPORT_TRANSPORT,
     EXPORT_NONE,
+    EXPORT_TRANSPORT_CLOUD,
+    EXPORT_TRANSPORT_LOCAL,
     CONF_INSTALLATIONS,
     CONF_KNOWN_INSTALLATIONS,
     DEFAULT_URL,
@@ -389,6 +393,12 @@ class IoTOpenOptionsFlow(OptionsFlow):
             )
             if not use_subentries and not selected:
                 errors["base"] = "no_selection"
+            elif (
+                user_input[CONF_EXPORT_TRANSPORT] == EXPORT_TRANSPORT_LOCAL
+                and user_input[CONF_EXPORT_INSTALLATION] != EXPORT_NONE
+                and not self.hass.config_entries.async_entries("mqtt")
+            ):
+                errors[CONF_EXPORT_TRANSPORT] = "mqtt_required"
             else:
                 data = dict(entry.options)
                 if not use_subentries:
@@ -402,6 +412,7 @@ class IoTOpenOptionsFlow(OptionsFlow):
                         CONF_EXPORT_LABEL: user_input[CONF_EXPORT_LABEL].strip() or DEFAULT_EXPORT_LABEL,
                         CONF_EXPORT_CONTROL: user_input[CONF_EXPORT_CONTROL],
                         CONF_EXPORT_CATEGORIZED: user_input[CONF_EXPORT_CATEGORIZED],
+                        CONF_EXPORT_TRANSPORT: user_input[CONF_EXPORT_TRANSPORT],
                         CONF_INSTANCE_NAME: slugify(user_input[CONF_INSTANCE_NAME]) or "home",
                         CONF_IMPORT_MODE: user_input[CONF_IMPORT_MODE],
                     }
@@ -449,6 +460,16 @@ class IoTOpenOptionsFlow(OptionsFlow):
                 vol.Required(
                     CONF_EXPORT_CATEGORIZED, default=entry.options.get(CONF_EXPORT_CATEGORIZED, False)
                 ): BooleanSelector(),
+                vol.Required(
+                    CONF_EXPORT_TRANSPORT,
+                    default=entry.options.get(CONF_EXPORT_TRANSPORT, DEFAULT_EXPORT_TRANSPORT),
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[EXPORT_TRANSPORT_CLOUD, EXPORT_TRANSPORT_LOCAL],
+                        translation_key=CONF_EXPORT_TRANSPORT,
+                        mode=SelectSelectorMode.LIST,
+                    )
+                ),
                 vol.Required(
                     CONF_INSTANCE_NAME,
                     default=entry.options.get(CONF_INSTANCE_NAME)

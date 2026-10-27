@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -9,9 +10,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
+    async_fire_mqtt_message,
     async_fire_time_changed,
     async_mock_service,
 )
+from pytest_homeassistant_custom_component.typing import MqttMockHAClient
 
 from custom_components.iotopen.const import DOMAIN
 from custom_components.iotopen.pyiotopen import Device, Function, IoTOpenForbiddenError
@@ -395,3 +398,66 @@ async def test_forbidden_issue_removed_on_unload(
     assert await hass.config_entries.async_unload(config_entry.entry_id)
     await hass.async_block_till_done()
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_local_transport_uses_the_edge_broker(
+    hass: HomeAssistant,
+    mqtt_mock: MqttMockHAClient,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    lynx: LynxData,
+) -> None:
+    """Local mode: values and commands over HA's MQTT integration, with bare topics."""
+    _player(hass, _label(hass))
+    hass.states.async_set(PLAYER, "playing", PLAYING)
+    cloud = await _setup(hass, config_entry, mock_mqtt, export_transport="local")
+    calls = {service: async_mock_service(hass, "media_player", service) for service in ("media_play", "media_pause")}
+
+    # structure still goes over REST
+    assert set(_own_functions(lynx)) == {"playing", "volume", "mute", "state", "power"}
+
+    # values: bare topic on the local broker, QoS 1, nothing on IoT Open's cloud MQTT
+    local = {c.args[0]: c.args[1:] for c in mqtt_mock.async_publish.call_args_list}
+    payload, qos, retain = local["obj/ha/media_player/living_room/playing"]
+    assert json.loads(payload)["value"] == 1
+    assert (qos, retain) == (1, False)
+    assert not [t for t, _ in cloud.published if "/obj/ha/" in t]
+    assert not [t for t in cloud.subscriptions if "/set/obj/ha/" in t]
+
+    # a state change is published locally
+    mqtt_mock.async_publish.reset_mock()
+    hass.states.async_set(PLAYER, "paused", PLAYING)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    topics = [c.args[0] for c in mqtt_mock.async_publish.call_args_list]
+    assert "obj/ha/media_player/living_room/playing" in topics
+
+    # a command on the edge broker (local dashboard, or bridged down from IoT Open) calls HA once
+    async_fire_mqtt_message(hass, "set/obj/ha/media_player/living_room/playing", '{"value": 1}')
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert len(calls["media_play"]) == 1
+
+    # the same command arriving over the cloud connection is not executed a second time
+    cloud.push(f"{CLIENT_ID}/set/obj/ha/media_player/living_room/playing", {"value": 0})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert not calls["media_pause"]
+
+
+async def test_cloud_transport_ignores_the_local_broker(
+    hass: HomeAssistant,
+    mqtt_mock: MqttMockHAClient,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+) -> None:
+    """Default mode: HA's MQTT integration is neither used for values nor for commands."""
+    _player(hass, _label(hass))
+    hass.states.async_set(PLAYER, "playing", PLAYING)
+    cloud = await _setup(hass, config_entry, mock_mqtt)
+    calls = async_mock_service(hass, "media_player", "media_play")
+
+    assert not [c for c in mqtt_mock.async_publish.call_args_list if c.args[0].startswith("obj/ha/")]
+    assert _published(cloud, "playing")
+    async_fire_mqtt_message(hass, "set/obj/ha/media_player/living_room/playing", '{"value": 1}')
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert not calls

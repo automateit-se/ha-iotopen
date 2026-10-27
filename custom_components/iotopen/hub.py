@@ -56,6 +56,7 @@ from .pyiotopen import (
 from .const import (
     CONF_ADD_NEW_INSTALLATIONS,
     CONF_EXPORT_CATEGORIZED,
+    CONF_EXPORT_TRANSPORT,
     CONF_EXPORT_CONTROL,
     CONF_IMPORT_MODE,
     CONF_INSTALLATION_ID,
@@ -68,6 +69,7 @@ from .const import (
     CONF_EXPORT_LABEL,
     CONF_INSTALLATIONS,
     DEFAULT_EXPORT_LABEL,
+    DEFAULT_EXPORT_TRANSPORT,
     EXPORT_NONE,
     CONF_KNOWN_INSTALLATIONS,
     DOMAIN,
@@ -142,6 +144,7 @@ class IoTOpenHub:
             self.entry.options.get(CONF_EXPORT_LABEL, DEFAULT_EXPORT_LABEL),
             bool(self.entry.options.get(CONF_EXPORT_CONTROL, True)),
             bool(self.entry.options.get(CONF_EXPORT_CATEGORIZED, False)),
+            self.export_transport,
             self.instance_name,
             self.import_mode,
         )
@@ -151,6 +154,11 @@ class IoTOpenHub:
         """Short name used in ``ha.destination`` (defaults to the slugified HA location name)."""
         name = str(self.entry.options.get(CONF_INSTANCE_NAME) or "").strip()
         return name or slugify(self.hass.config.location_name or "home") or "home"
+
+    @property
+    def export_transport(self) -> str:
+        """``cloud`` (IoT Open's MQTT) or ``local`` (HA's MQTT integration, the edge client's broker)."""
+        return str(self.entry.options.get(CONF_EXPORT_TRANSPORT, DEFAULT_EXPORT_TRANSPORT))
 
     @property
     def import_mode(self) -> str:
@@ -318,6 +326,7 @@ class IoTOpenHub:
             self.entry.options.get(CONF_EXPORT_LABEL, DEFAULT_EXPORT_LABEL),
             bool(self.entry.options.get(CONF_EXPORT_CONTROL, True)),
             bool(self.entry.options.get(CONF_EXPORT_CATEGORIZED, False)),
+            self.export_transport,
         )
         try:
             await self.exporter.async_start()

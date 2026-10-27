@@ -1,6 +1,9 @@
 {
   "domain": "iotopen",
   "name": "IoT Open",
+  "after_dependencies": [
+    "mqtt"
+  ],
   "codeowners": [
     "@developmentautomateit"
   ],

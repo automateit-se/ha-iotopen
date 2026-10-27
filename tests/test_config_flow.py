@@ -13,9 +13,12 @@ from custom_components.iotopen.const import (
     CONF_ADD_NEW_INSTALLATIONS,
     CONF_AUTH_METHOD,
     CONF_CODE,
+    CONF_EXPORT_INSTALLATION,
+    CONF_EXPORT_TRANSPORT,
     CONF_INSTALLATIONS,
     CONF_KNOWN_INSTALLATIONS,
     DOMAIN,
+    EXPORT_TRANSPORT_LOCAL,
 )
 from homeassistant.config_entries import SOURCE_USER
 from homeassistant.const import CONF_PASSWORD, CONF_TOKEN, CONF_URL, CONF_USERNAME
@@ -189,3 +192,24 @@ async def test_options_flow(
     assert config_entry.options[CONF_INSTALLATIONS] == [1002]
     assert config_entry.options[CONF_ADD_NEW_INSTALLATIONS] is False
     assert config_entry.options[CONF_KNOWN_INSTALLATIONS] == [1001, 1002]
+
+
+async def test_options_local_transport_needs_mqtt(
+    hass: HomeAssistant, mock_client: MagicMock, mock_mqtt: type[FakeMqtt], config_entry: MockConfigEntry
+) -> None:
+    """The local broker can only be chosen when Home Assistant's MQTT integration is set up."""
+    config_entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(config_entry.entry_id)
+    user_input = {
+        CONF_INSTALLATIONS: ["1001"],
+        CONF_EXPORT_INSTALLATION: "1001",
+        CONF_EXPORT_TRANSPORT: EXPORT_TRANSPORT_LOCAL,
+    }
+    result = await hass.config_entries.options.async_configure(result["flow_id"], user_input)
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_EXPORT_TRANSPORT: "mqtt_required"}
+
+    MockConfigEntry(domain="mqtt").add_to_hass(hass)
+    result = await hass.config_entries.options.async_configure(result["flow_id"], user_input)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert config_entry.options[CONF_EXPORT_TRANSPORT] == EXPORT_TRANSPORT_LOCAL
