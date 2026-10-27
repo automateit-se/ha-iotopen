@@ -20,6 +20,11 @@ CONF_EXPORT_CONTROL: Final = "export_control"
 # also mirror diagnostic/config entities of labelled devices (off: e.g. a phone's battery sensors stay out)
 CONF_EXPORT_CATEGORIZED: Final = "export_categorized"
 EXPORT_NONE: Final = "none"
+# how mirrored values and commands travel (structure always uses the REST API)
+CONF_EXPORT_TRANSPORT: Final = "export_transport"
+EXPORT_TRANSPORT_CLOUD: Final = "cloud"  # IoT Open's MQTT over WebSocket
+EXPORT_TRANSPORT_LOCAL: Final = "local"  # HA's MQTT integration -> the edge client's broker and bridge
+DEFAULT_EXPORT_TRANSPORT: Final = EXPORT_TRANSPORT_CLOUD
 DEFAULT_EXPORT_LABEL: Final = "IoT Open"
 CONF_INSTANCE_NAME: Final = "instance_name"
 CONF_IMPORT_MODE: Final = "import_mode"

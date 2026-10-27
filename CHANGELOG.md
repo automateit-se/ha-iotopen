@@ -10,6 +10,10 @@ All notable changes to this project are documented here. The format follows
   installation), Home Assistant now shows a repair under *Settings → Repairs* that explains which access is missing,
   instead of only a warning in the log. The repair disappears by itself when mirroring works again, or when
   mirroring is turned off.
+- Mirroring: new option *Send values and receive commands via* with *Local broker*. Values and commands then go
+  through Home Assistant's MQTT integration and the edge client's broker, whose bridge forwards them to and from
+  IoT Open. The local dashboard and Home Assistant keep working together without internet. The default is unchanged
+  (IoT Open's cloud MQTT).
 
 ## 0.4.0
 
