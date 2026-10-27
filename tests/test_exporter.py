@@ -461,3 +461,58 @@ async def test_cloud_transport_ignores_the_local_broker(
     async_fire_mqtt_message(hass, "set/obj/ha/media_player/living_room/playing", '{"value": 1}')
     await hass.async_block_till_done(wait_background_tasks=True)
     assert not calls
+
+
+THERMOSTAT = "climate.hallway"
+HEATING = {
+    "friendly_name": "Hallway",
+    "supported_features": 1,
+    "hvac_modes": ["off", "heat"],
+    "min_temp": 5,
+    "max_temp": 30,
+    "target_temp_step": 0.5,
+    "current_temperature": 20.5,
+    "temperature": 21,
+    "hvac_action": "heating",
+}
+
+
+async def test_thermostat_becomes_several_functions(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    lynx: LynxData,
+) -> None:
+    label_id = _label(hass)
+    ent_reg = er.async_get(hass)
+    entry = ent_reg.async_get_or_create("climate", "demo", "thermostat-1", suggested_object_id="hallway")
+    ent_reg.async_update_entity(entry.entity_id, labels={label_id})
+    hass.states.async_set(THERMOSTAT, "heat", HEATING)
+    mqtt = await _setup(hass, config_entry, mock_mqtt)
+
+    functions = {f["meta"]["ha.part"]: f for f in lynx.functions[IID] if f["meta"].get("ha.entity_id") == THERMOSTAT}
+    assert set(functions) == {"current", "target", "mode", "action"}
+    assert functions["target"]["type"] == "setpoint" and functions["target"]["meta"]["unit"] == "°C"
+    assert functions["mode"]["meta"]["ha.hvac_modes"] == "off,heat"
+
+    def published(part: str) -> list[Any]:
+        topic = f"{CLIENT_ID}/obj/ha/climate/hallway/{part}"
+        return [p["value"] for t, p in mqtt.published if t == topic]
+
+    assert published("current") == [20.5] and published("target") == [21]
+    assert published("mode") == ["heat"] and published("action") == ["heating"]
+
+    hass.states.async_set(THERMOSTAT, "heat", {**HEATING, "current_temperature": 20.7, "hvac_action": "idle"})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert published("current") == [20.5, 20.7] and published("action") == ["heating", "idle"]
+    assert published("target") == [21]  # unchanged values are not repeated
+
+    calls = {s: async_mock_service(hass, "climate", s) for s in ("set_temperature", "set_hvac_mode")}
+    base = f"{CLIENT_ID}/set/obj/ha/climate/hallway"
+    mqtt.push(f"{base}/target", {"value": 22.5})
+    mqtt.push(f"{base}/mode", {"value": "off"})
+    mqtt.push(f"{base}/current", {"value": 30})  # read only: ignored
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert calls["set_temperature"][0].data == {"entity_id": THERMOSTAT, "temperature": 22.5}
+    assert calls["set_hvac_mode"][0].data == {"entity_id": THERMOSTAT, "hvac_mode": "off"}

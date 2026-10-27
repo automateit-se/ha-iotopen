@@ -7,7 +7,9 @@ IoT Open conventions:
   ``ha.source_id`` = the stable HA instance id, so the
   import side can ignore them and the export side knows which objects it owns.
 * most entities become one function; a ``media_player`` becomes several (playback, volume, mute, status,
-  power) on topics ``obj/ha/media_player/<object_id>/<part>``, told apart by ``ha.part``.
+  power) on topics ``obj/ha/media_player/<object_id>/<part>``, told apart by ``ha.part``; a ``climate``
+  entity likewise (current temperature, target temperature, HVAC mode, HVAC action) on
+  ``obj/ha/climate/<object_id>/<part>``.
 """
 
 from __future__ import annotations
@@ -23,7 +25,8 @@ META_ENTITY_ID = "ha.entity_id"
 META_HA_DEVICE_ID = "ha.device_id"
 META_DEVICE_CLASS = "ha.device_class"  # keeps HA's class for types like boolean_text
 META_HA_TYPE = "ha.type"  # the type HA suggested; a different function type means it was changed in IoT Open
-META_PART = "ha.part"  # which function of a multi-function entity (media_player); absent otherwise
+META_PART = "ha.part"  # which function of a multi-function entity (media_player, climate); absent otherwise
+META_HVAC_MODES = "ha.hvac_modes"  # the HVAC modes a thermostat offers, comma separated (on its mode function)
 
 DOOR_CLASSES = {"door", "window", "garage_door", "opening"}
 MOVEMENT_CLASSES = {"motion", "occupancy", "presence", "moving"}
@@ -53,7 +56,14 @@ PART_MUTE = "mute"
 PART_STATE = "state"
 PART_POWER = "power"
 MEDIA_PARTS = (PART_PLAYING, PART_VOLUME, PART_MUTE, PART_STATE, PART_POWER)
-TOPIC_SUFFIXES = {ONOFF_SUFFIX, *MEDIA_PARTS}
+CLIMATE = "climate"
+PART_CURRENT = "current"
+PART_TARGET = "target"
+PART_MODE = "mode"
+PART_ACTION = "action"
+CLIMATE_PARTS = (PART_CURRENT, PART_TARGET, PART_MODE, PART_ACTION)
+CLIMATE_TARGET_TEMPERATURE = 1  # ClimateEntityFeature.TARGET_TEMPERATURE
+TOPIC_SUFFIXES = {ONOFF_SUFFIX, *MEDIA_PARTS, *CLIMATE_PARTS}
 
 # MediaPlayerEntityFeature bits (homeassistant.components.media_player)
 MP_PAUSE = 1
@@ -79,6 +89,10 @@ _PART_NAMES = {
     "sv": {
         PART_PLAYING: "Uppspelning", PART_VOLUME: "Volym", PART_MUTE: "Mute", PART_STATE: "Status", PART_POWER: "På/av"
     },
+}
+_CLIMATE_NAMES = {
+    "en": {PART_CURRENT: "Temperature", PART_TARGET: "Target temperature", PART_MODE: "Mode", PART_ACTION: "Action"},
+    "sv": {PART_CURRENT: "Temperatur", PART_TARGET: "Börvärde", PART_MODE: "Läge", PART_ACTION: "Drift"},
 }
 
 
@@ -285,10 +299,139 @@ def is_media_active(state: str | None) -> bool:
     return state is not None and str(state).lower() not in UNAVAILABLE_STATES | MEDIA_OFF_STATES
 
 
-def part_name(part: str, language: str | None = None) -> str:
-    """Name suffix of a media player function, in Swedish or English."""
-    names = _PART_NAMES["sv"] if (language or "").lower().startswith("sv") else _PART_NAMES["en"]
+def part_name(part: str, language: str | None = None, domain: str = MEDIA_PLAYER) -> str:
+    """Name suffix of a media player or thermostat function, in Swedish or English."""
+    table = _CLIMATE_NAMES if domain == CLIMATE else _PART_NAMES
+    names = table["sv"] if (language or "").lower().startswith("sv") else table["en"]
     return names[part]
+
+
+def has_parts(entity_id: str) -> bool:
+    """Whether an entity becomes several functions (media player, thermostat)."""
+    return entity_id.split(".", 1)[0] in (MEDIA_PLAYER, CLIMATE)
+
+
+def climate_parts(attributes: dict[str, Any], keep: Iterable[str] = ()) -> list[str]:
+    """Functions a thermostat gets: mode (always), the current temperature, the target temperature and the
+    HVAC action when it reports them. ``keep`` as for :func:`media_parts` (an unavailable thermostat has no
+    attributes)."""
+    try:
+        features = int(attributes.get("supported_features") or 0)
+    except (TypeError, ValueError):
+        features = 0
+    has = {
+        PART_CURRENT: "current_temperature" in attributes,
+        PART_TARGET: bool(features & CLIMATE_TARGET_TEMPERATURE) or "temperature" in attributes,
+        PART_MODE: True,
+        PART_ACTION: "hvac_action" in attributes,
+    }
+    kept = set(keep)
+    return [p for p in CLIMATE_PARTS if has[p] or p in kept]
+
+
+def entity_parts(entity_id: str, attributes: dict[str, Any], keep: Iterable[str] = ()) -> list[str]:
+    """The parts of a multi-function entity (empty for one-function entities)."""
+    domain = entity_id.split(".", 1)[0]
+    if domain == MEDIA_PLAYER:
+        return media_parts(attributes, keep)
+    if domain == CLIMATE:
+        return climate_parts(attributes, keep)
+    return []
+
+
+def is_parts_active(entity_id: str, state: str | None) -> bool:
+    """Whether a multi-function entity's attributes can be trusted to decide its functions."""
+    if entity_id.split(".", 1)[0] == MEDIA_PLAYER:
+        return is_media_active(state)
+    return state is not None and str(state).lower() not in UNAVAILABLE_STATES
+
+
+def _number(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if number != number or number in (float("inf"), float("-inf")) else number
+
+
+def _fmt(number: float) -> str:
+    return str(int(number)) if float(number).is_integer() else str(number)
+
+
+def _climate_spec(
+    entity_id: str,
+    name: str,
+    part: str,
+    attributes: dict[str, Any],
+    base: dict[str, str],
+    allow_control: bool,
+    language: str | None,
+) -> FunctionSpec:
+    topic = f"{topic_for(entity_id)}/{part}"
+    meta = {**base, "name": f"{name} {part_name(part, language, CLIMATE)}", "topic_read": topic, META_PART: part}
+    unit = str(attributes.get("temperature_unit") or attributes.get("unit_of_measurement") or "°C")
+    if part in (PART_CURRENT, PART_TARGET):
+        meta["unit"] = unit
+        meta["format"] = f"%.1f {unit}"
+    if part == PART_CURRENT:
+        type_ = "temperature"
+    elif part == PART_TARGET:
+        type_ = "setpoint"
+        for key, attr in (("min", "min_temp"), ("max", "max_temp"), ("step", "target_temp_step")):
+            number = _number(attributes.get(attr))
+            if number is not None:
+                meta[key] = _fmt(number)
+    elif part == PART_MODE:
+        type_ = "text"
+        modes = [str(m) for m in attributes.get("hvac_modes") or [] if str(m)]
+        if modes:
+            meta[META_HVAC_MODES] = ",".join(modes)
+    else:
+        type_ = "text"
+    if allow_control and part in (PART_TARGET, PART_MODE):
+        meta["topic_write"] = f"{WRITE_PREFIX}{topic}"
+    meta[META_HA_TYPE] = type_
+    return FunctionSpec(entity_id=entity_id, type=type_, meta=meta)
+
+
+def climate_value(part: str, state: str | None, attributes: dict[str, Any]) -> tuple[Any, str] | None:
+    """Value for one thermostat function. ``None`` when nothing should be published."""
+    if state is None or str(state).lower() in UNAVAILABLE_STATES:
+        return None
+    if part == PART_MODE:
+        return str(state)[:255], ""
+    if part == PART_ACTION:
+        action = attributes.get("hvac_action")
+        return None if action is None else (str(action)[:255], "")
+    number = _number(attributes.get("current_temperature" if part == PART_CURRENT else "temperature"))
+    if number is None:
+        return None
+    return (int(number) if number.is_integer() else round(number, 2)), ""
+
+
+def climate_command(part: str, value: Any) -> tuple[str, str, dict[str, Any]] | None:
+    """Command on a thermostat function -> (domain, service, data)."""
+    if part == PART_TARGET:
+        number = _number(value)
+        return None if number is None else (CLIMATE, "set_temperature", {"temperature": number})
+    if part == PART_MODE:
+        mode = str(value).strip().lower()
+        return (CLIMATE, "set_hvac_mode", {"hvac_mode": mode}) if mode else None
+    return None
+
+
+def part_value(entity_id: str, part: str, state: str | None, attributes: dict[str, Any]) -> tuple[Any, str] | None:
+    """Value of one function of a multi-function entity."""
+    if entity_id.split(".", 1)[0] == CLIMATE:
+        return climate_value(part, state, attributes)
+    return media_value(part, state, attributes)
+
+
+def part_command(entity_id: str, part: str, value: Any) -> tuple[str, str, dict[str, Any]] | None:
+    """Command on one function of a multi-function entity."""
+    if entity_id.split(".", 1)[0] == CLIMATE:
+        return climate_command(part, value)
+    return media_command(part, value)
 
 
 def _media_spec(
@@ -333,8 +476,9 @@ def function_specs(
     language: str | None = None,
     keep_parts: Iterable[str] = (),
 ) -> list[FunctionSpec]:
-    """All IoT Open functions for an entity: one, or several for a media player (see :func:`media_parts`)."""
-    if entity_id.split(".", 1)[0] != MEDIA_PLAYER:
+    """All IoT Open functions for an entity: one, or several for a media player or a thermostat (see
+    :func:`media_parts`, :func:`climate_parts`)."""
+    if not has_parts(entity_id):
         return [
             function_spec(
                 entity_id,
@@ -353,9 +497,10 @@ def function_specs(
         base["device_id"] = str(iot_device_id)
     if attributes.get("device_class"):
         base[META_DEVICE_CLASS] = str(attributes["device_class"])
+    build = _climate_spec if entity_id.split(".", 1)[0] == CLIMATE else _media_spec
     return [
-        _media_spec(entity_id, name, part, attributes, base, allow_control, language)
-        for part in media_parts(attributes, keep_parts)
+        build(entity_id, name, part, attributes, base, allow_control, language)
+        for part in entity_parts(entity_id, attributes, keep_parts)
     ]
 
 

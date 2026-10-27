@@ -36,6 +36,7 @@ from homeassistant.helpers.event import async_call_later, async_track_state_chan
 
 from .const import DOMAIN, EXPORT_TRANSPORT_CLOUD, EXPORT_TRANSPORT_LOCAL
 from .export_mapping import (
+    CLIMATE,
     MEDIA_PLAYER,
     META_ENTITY_ID,
     META_HA_DEVICE_ID,
@@ -54,10 +55,11 @@ from .export_mapping import (
     function_specs,
     is_own,
     is_exportable,
-    is_media_active,
-    media_command,
-    media_parts,
-    media_value,
+    entity_parts,
+    has_parts,
+    is_parts_active,
+    part_command,
+    part_value,
     meta_differs,
     topic_suffix,
 )
@@ -379,9 +381,12 @@ class IoTOpenExporter:
             attrs = dict(state.attributes) if state else {}
             if entry is not None and "device_class" not in attrs and (entry.device_class or entry.original_device_class):
                 attrs["device_class"] = entry.device_class or entry.original_device_class
+            if entity_id.split(".", 1)[0] == CLIMATE:
+                attrs.setdefault("temperature_unit", self.hass.config.units.temperature_unit)
             keep_parts: set[str] = set()
-            if entity_id.split(".", 1)[0] == MEDIA_PLAYER and not is_media_active(state.state if state else None):
-                # off or unavailable players may report fewer features: only add functions, never delete
+            if has_parts(entity_id) and not is_parts_active(entity_id, state.state if state else None):
+                # off or unavailable players (and unavailable thermostats) may report fewer features or
+                # attributes: only add functions, never delete
                 keep_parts = {part for eid, part in own_fns if eid == entity_id and part}
                 if entry is not None and "supported_features" not in attrs:
                     attrs["supported_features"] = entry.supported_features
@@ -469,13 +474,13 @@ class IoTOpenExporter:
         entity_id = event.data["entity_id"]
         new_state = event.data["new_state"]
         if (
-            entity_id.split(".", 1)[0] == MEDIA_PLAYER
+            has_parts(entity_id)
             and new_state is not None
-            and is_media_active(new_state.state)
+            and is_parts_active(entity_id, new_state.state)
             and "supported_features" in new_state.attributes
-            and set(media_parts(dict(new_state.attributes))) != {s.part for s in self.exported.get(entity_id, [])}
+            and set(entity_parts(entity_id, dict(new_state.attributes))) != {s.part for s in self.exported.get(entity_id, [])}
         ):
-            self.schedule_reconcile()  # the player gained or lost features
+            self.schedule_reconcile()  # the player or thermostat gained or lost features
         self._publish(entity_id, new_state)
 
     @callback
@@ -497,11 +502,11 @@ class IoTOpenExporter:
         attrs = dict(state.attributes)
         for spec in specs:
             if spec.part:
-                converted = media_value(spec.part, state.state, attrs)
+                converted = part_value(entity_id, spec.part, state.state, attrs)
                 if converted is None:
                     continue
                 topic = spec.topic_read
-                if spec.part == PART_VOLUME and not force:
+                if domain == MEDIA_PLAYER and spec.part == PART_VOLUME and not force:
                     self._debounce_volume(topic, converted, timestamp)
                     continue
                 if not force and self._last_sent.get(topic) == converted:
@@ -593,7 +598,7 @@ class IoTOpenExporter:
         if entity_id is None or spec is None or spec.topic_write is None:
             return
         if spec.part:
-            call = media_command(spec.part, event.value)
+            call = part_command(entity_id, spec.part, event.value)
         elif spec.meta.get("topic_read_onoff") and suffix != ONOFF_SUFFIX:
             call = dimmer_command(event.value)  # level 0-100
         else:
