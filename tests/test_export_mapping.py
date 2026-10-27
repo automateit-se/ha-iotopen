@@ -356,8 +356,8 @@ def test_climate_value_and_command():
     assert part_value("climate.hallway", "target", "heat", THERMOSTAT) == (21.5, "")
     assert part_value("climate.hallway", "target", "heat", {**THERMOSTAT, "temperature": 21.0}) == (21, "")
     assert part_value("climate.hallway", "target", "off", {**THERMOSTAT, "temperature": None}) is None
-    assert part_value("climate.hallway", "mode", "heat", THERMOSTAT) == ("heat", "")
-    assert part_value("climate.hallway", "action", "heat", THERMOSTAT) == ("heating", "")
+    assert part_value("climate.hallway", "mode", "heat", THERMOSTAT) == ("heat", "heat")
+    assert part_value("climate.hallway", "action", "heat", THERMOSTAT) == ("heating", "heating")
     assert part_value("climate.hallway", "mode", "unavailable", THERMOSTAT) is None
     assert part_command("climate.hallway", "target", "22.5") == ("climate", "set_temperature", {"temperature": 22.5})
     assert climate_command("target", "warm") is None

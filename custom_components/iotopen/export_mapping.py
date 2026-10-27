@@ -395,14 +395,17 @@ def _climate_spec(
 
 
 def climate_value(part: str, state: str | None, attributes: dict[str, Any]) -> tuple[Any, str] | None:
-    """Value for one thermostat function. ``None`` when nothing should be published."""
+    """Value for one thermostat function. ``None`` when nothing should be published.
+
+    Mode and action also go in ``msg``: IoT Open's status API can return 0 for a text value.
+    """
     if state is None or str(state).lower() in UNAVAILABLE_STATES:
         return None
     if part == PART_MODE:
-        return str(state)[:255], ""
+        return str(state)[:255], str(state)[:255]
     if part == PART_ACTION:
         action = attributes.get("hvac_action")
-        return None if action is None else (str(action)[:255], "")
+        return None if action is None else (str(action)[:255], str(action)[:255])
     number = _number(attributes.get("current_temperature" if part == PART_CURRENT else "temperature"))
     if number is None:
         return None

@@ -179,6 +179,7 @@ A thermostat (`climate`) becomes up to four functions on the same IoT Open devic
 | *&lt;name&gt; Mode* | text (`off`, `heat`, `cool`, `auto`, …), the modes the thermostat offers in `ha.hvac_modes` | `…/mode` | `set_hvac_mode` |
 | *&lt;name&gt; Action* | text, read only (`heating`, `idle`, `off`, …) | `…/action` | - |
 
+- *Mode* and *Action* send the text both as the value and in `msg`.
 - *Mode* is always created; the others when the thermostat reports the value. An unavailable thermostat keeps its
   functions.
 - The unit is Home Assistant's temperature unit. The names are in Swedish when Home Assistant's language is Swedish
