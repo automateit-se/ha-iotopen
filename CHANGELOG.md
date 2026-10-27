@@ -5,15 +5,23 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
-- The project is now licensed under the MIT License (previously Apache 2.0), as are AutomateIT's other IoT Open projects.
-- Mirroring: when IoT Open answers HTTP 403 (the API key's user may not change devices and functions in the mirror
+## 0.5.0
+
+### Mirroring (Home Assistant → IoT Open)
+
+- New option *Send values and receive commands via* with *Local broker*. Values and commands then go through Home
+  Assistant's MQTT integration and the edge client's broker, whose bridge forwards them to and from IoT Open. The
+  local dashboard and Home Assistant keep working together without internet. The default is unchanged (IoT Open's
+  cloud MQTT). The option needs Home Assistant's MQTT integration, connected to the edge client's broker.
+- When IoT Open answers HTTP 403 (the API key's user may not change devices and functions in the mirror
   installation), Home Assistant now shows a repair under *Settings → Repairs* that explains which access is missing,
   instead of only a warning in the log. The repair disappears by itself when mirroring works again, or when
   mirroring is turned off.
-- Mirroring: new option *Send values and receive commands via* with *Local broker*. Values and commands then go
-  through Home Assistant's MQTT integration and the edge client's broker, whose bridge forwards them to and from
-  IoT Open. The local dashboard and Home Assistant keep working together without internet. The default is unchanged
-  (IoT Open's cloud MQTT).
+
+### Other
+
+- The project is now licensed under the MIT License (previously Apache 2.0), as are AutomateIT's other IoT Open
+  projects.
 
 ## 0.4.0
 
