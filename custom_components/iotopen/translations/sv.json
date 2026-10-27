@@ -141,5 +141,11 @@
         "cannot_connect": "Kan inte ansluta till IoT Open-servern"
       }
     }
+  },
+  "issues": {
+    "export_forbidden": {
+      "title": "IoT Open: saknar behörighet att spegla till {installation}",
+      "description": "Home Assistant kan inte spegla märkta entiteter till IoT Open-installationen **{installation}** (id {installation_id}). IoT Open svarade *HTTP 403: Permission required*.\n\nAPI-nyckeln eller token fungerar, men användaren i IoT Open får inte skapa, ändra eller ta bort enheter och funktioner i installationen.\n\nSå här löser du det, välj ett av sätten:\n- ge användaren (eller dess grupp) en roll med skrivrätt till enheter och funktioner i organisationen som äger [{installation}]({url}), eller\n- konfigurera om integrationen med en API-nyckel för en användare som redan har den rätten.\n\nHome Assistant gör ett nytt försök efter {retry} sekunder och fortsätter tills det lyckas. Meddelandet försvinner av sig självt när speglingen fungerar."
+    }
   }
 }

@@ -62,7 +62,8 @@ If the key is revoked or the token expires, Home Assistant starts a re-authentic
 | Import from IoT Open | *Only tagged* (default): only devices/functions whose `ha.destination` names this instance. *All*: every function in the selected installations. |
 
 The API key's user needs write access to devices and functions in the mirror installation. Without it, IoT Open
-answers HTTP 403.
+answers HTTP 403, and Home Assistant shows a repair under *Settings → Repairs* that names the installation. Mirroring
+is retried every minute, and the repair disappears by itself once the user has been given access.
 
 ## Import: IoT Open → Home Assistant
 

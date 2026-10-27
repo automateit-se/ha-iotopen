@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 ## Unreleased
 
 - The project is now licensed under the MIT License (previously Apache 2.0), as are AutomateIT's other IoT Open projects.
+- Mirroring: when IoT Open answers HTTP 403 (the API key's user may not change devices and functions in the mirror
+  installation), Home Assistant now shows a repair under *Settings → Repairs* that explains which access is missing,
+  instead of only a warning in the log. The repair disappears by itself when mirroring works again, or when
+  mirroring is turned off.
 
 ## 0.4.0
 
