@@ -13,10 +13,16 @@ from pytest_homeassistant_custom_component.common import (
     async_mock_service,
 )
 
-from custom_components.iotopen.pyiotopen import Device, Function
+from custom_components.iotopen.const import DOMAIN
+from custom_components.iotopen.pyiotopen import Device, Function, IoTOpenForbiddenError
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr, entity_registry as er, label_registry as lr
+from homeassistant.helpers import (
+    device_registry as dr,
+    entity_registry as er,
+    issue_registry as ir,
+    label_registry as lr,
+)
 from homeassistant.util import dt as dt_util
 
 from .conftest import FakeMqtt, LynxData
@@ -333,3 +339,59 @@ async def test_diagnostic_entities_of_labelled_devices(
     await _setup(hass, config_entry, mock_mqtt, export_categorized=include)
     mirrored = {f["meta"].get("ha.entity_id") for f in lynx.functions[IID]} - {None}
     assert mirrored == expected
+
+
+async def test_forbidden_export_raises_repair_issue(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    lynx: LynxData,
+) -> None:
+    """A 403 from IoT Open shows up in Repairs and disappears once access is granted."""
+    _player(hass, _label(hass))
+    hass.states.async_set(PLAYER, "playing", PLAYING)
+    create_function = export_client.create_function.side_effect
+    export_client.create_function.side_effect = IoTOpenForbiddenError(
+        403, "Permission required to access this resource."
+    )
+    await _setup(hass, config_entry, mock_mqtt)
+
+    issue_id = f"export_forbidden_{config_entry.entry_id}"
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    assert issue.translation_key == "export_forbidden"
+    assert issue.severity == ir.IssueSeverity.ERROR
+    assert issue.translation_placeholders["installation_id"] == str(IID)
+    assert issue.translation_placeholders["url"].endswith(f"/installations/{IID}")
+    assert config_entry.runtime_data.exporter.last_error.startswith("HTTP 403")
+
+    # still forbidden: the issue stays and the exporter keeps retrying
+    await _later(hass, 61)
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+
+    # the user got write access: the next retry mirrors the player and clears the issue
+    export_client.create_function.side_effect = create_function
+    await _later(hass, 61)
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+    assert set(_own_functions(lynx)) == {"playing", "volume", "mute", "state", "power"}
+
+
+async def test_forbidden_issue_removed_on_unload(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+) -> None:
+    """Stopping mirroring (unload or another installation) removes a stale issue."""
+    _player(hass, _label(hass))
+    hass.states.async_set(PLAYER, "playing", PLAYING)
+    export_client.create_device.side_effect = IoTOpenForbiddenError(403, "Permission required")
+    export_client.create_function.side_effect = IoTOpenForbiddenError(403, "Permission required")
+    await _setup(hass, config_entry, mock_mqtt)
+    issue_id = f"export_forbidden_{config_entry.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+
+    assert await hass.config_entries.async_unload(config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None

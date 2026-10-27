@@ -21,7 +21,12 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import CALLBACK_TYPE, Event, EventStateChangedData, HomeAssistant, State, callback
-from homeassistant.helpers import device_registry as dr, entity_registry as er, label_registry as lr
+from homeassistant.helpers import (
+    device_registry as dr,
+    entity_registry as er,
+    issue_registry as ir,
+    label_registry as lr,
+)
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 
 from .const import DOMAIN
@@ -57,6 +62,7 @@ from .pyiotopen import (
     Installation,
     IoTOpenAuthError,
     IoTOpenError,
+    IoTOpenForbiddenError,
     StructureEvent,
     ValueUpdate,
     full_topic,
@@ -74,6 +80,8 @@ LABEL_ICON = "iotopen:badge"  # served by frontend/iotopen-icons.js
 LABEL_COLOR = "indigo"  # closest HA palette colour to IoT Open's #0d3e53
 LABEL_DESCRIPTION = "Speglas till IoT Open / Mirrored to IoT Open"
 DEVICE_TYPE = "HomeAssistant"
+ISSUE_EXPORT_FORBIDDEN = "export_forbidden"
+RETRY_DELAY = 60.0
 
 
 class IoTOpenExporter:
@@ -163,6 +171,8 @@ class IoTOpenExporter:
         self._volume_timers.clear()
         if self._task and not self._task.done():
             self._task.cancel()
+        # mirroring stopped (unload, or another installation chosen): an old repair is no longer true
+        self._clear_forbidden_issue()
 
     # ------------------------------------------------------------------ what to export
     def _label_id(self) -> str | None:
@@ -215,13 +225,46 @@ class IoTOpenExporter:
             try:
                 await self._reconcile()
                 self.last_error = None
+                self._clear_forbidden_issue()
             except IoTOpenAuthError:
                 self.last_error = "auth"
                 self.hub._start_reauth()  # noqa: SLF001
+            except IoTOpenForbiddenError as err:
+                # the key works, but its user may not change devices/functions here: tell the user
+                # in Repairs (a log line is easy to miss) and keep retrying until access is granted
+                self.last_error = str(err)
+                _LOGGER.warning("IoT Open export failed, retrying later: %s", err)
+                self._raise_forbidden_issue()
+                self.schedule_reconcile(RETRY_DELAY)
             except IoTOpenError as err:
                 self.last_error = str(err)
                 _LOGGER.warning("IoT Open export failed, retrying later: %s", err)
-                self.schedule_reconcile(60)
+                self.schedule_reconcile(RETRY_DELAY)
+
+    @property
+    def _forbidden_issue_id(self) -> str:
+        return f"{ISSUE_EXPORT_FORBIDDEN}_{self.hub.entry.entry_id}"
+
+    @callback
+    def _raise_forbidden_issue(self) -> None:
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self._forbidden_issue_id,
+            is_fixable=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key=ISSUE_EXPORT_FORBIDDEN,
+            translation_placeholders={
+                "installation": self.installation.name,
+                "installation_id": str(self.installation.id),
+                "url": f"{self.hub.client.base_url}/installations/{self.installation.id}",
+                "retry": str(int(RETRY_DELAY)),
+            },
+        )
+
+    @callback
+    def _clear_forbidden_issue(self) -> None:
+        ir.async_delete_issue(self.hass, DOMAIN, self._forbidden_issue_id)
 
     async def _reconcile(self) -> None:
         client = self.hub.client

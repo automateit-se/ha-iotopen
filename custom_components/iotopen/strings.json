@@ -141,5 +141,11 @@
         "cannot_connect": "Cannot connect to the IoT Open server"
       }
     }
+  },
+  "issues": {
+    "export_forbidden": {
+      "title": "IoT Open: no permission to mirror into {installation}",
+      "description": "Home Assistant cannot mirror labelled entities into the IoT Open installation **{installation}** (id {installation_id}). IoT Open answered *HTTP 403: Permission required*.\n\nThe API key or token works, but its IoT Open user is not allowed to create, change or delete devices and functions in this installation.\n\nTo fix it, either:\n- give that user (or its group) a role with write access to devices and functions in the organization that owns [{installation}]({url}), or\n- reconfigure the integration with an API key for a user that already has that access.\n\nHome Assistant tries again after {retry} seconds and keeps trying until it works. This message disappears by itself when mirroring works."
+    }
   }
 }
