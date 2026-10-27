@@ -56,7 +56,7 @@ If the key is revoked or the token expires, Home Assistant starts a re-authentic
 |---|---|
 | Mirror Home Assistant into installation | The IoT Open installation that labelled entities are mirrored into. `-` turns mirroring off. |
 | Label that selects what is mirrored | Default `IoT Open`. The label is created automatically. |
-| Allow IoT Open to control Home Assistant | Mirrored switches, lights, locks, covers, numbers, media players, … get a `topic_write`. |
+| Allow IoT Open to control Home Assistant | Mirrored switches, lights, locks, covers, numbers, media players, thermostats, … get a `topic_write`. |
 | Mirror diagnostic and configuration entities of labelled devices | Off by default. See [Mirroring](#mirroring-home-assistant--iot-open). |
 | Send values and receive commands via | *IoT Open (cloud)* (default) or *Local broker*. See [Local broker](#local-broker-mirroring-without-internet). |
 | This Home Assistant's name in IoT Open | Instance name used in `ha.source` and `ha.destination`. |
@@ -166,6 +166,28 @@ with `obj/ha/media_player/<object_id>`, and each function carries `ha.part`:
   published about 1 s after the last change, so dragging a slider gives one value.
 - The state follows Home Assistant: a command from IoT Open is confirmed when the player reports the new state.
 - `topic_write` is only set when *Allow IoT Open to control Home Assistant* is on.
+
+### Thermostats
+
+A thermostat (`climate`) becomes up to four functions on the same IoT Open device, on
+`obj/ha/climate/<object_id>/<part>`:
+
+| Function | Type | Topic | Control (`set/…`) |
+|---|---|---|---|
+| *&lt;name&gt; Temperature* | `temperature`, read only | `…/current` | - |
+| *&lt;name&gt; Target temperature* | `setpoint`, with `min`, `max` and `step` from Home Assistant | `…/target` | `set_temperature` |
+| *&lt;name&gt; Mode* | text (`off`, `heat`, `cool`, `auto`, …), the modes the thermostat offers in `ha.hvac_modes` | `…/mode` | `set_hvac_mode` |
+| *&lt;name&gt; Action* | text, read only (`heating`, `idle`, `off`, …) | `…/action` | - |
+
+- *Mode* and *Action* send the text both as the value and in `msg`.
+- *Mode* is always created; the others when the thermostat reports the value. An unavailable thermostat keeps its
+  functions.
+- The unit is Home Assistant's temperature unit. The names are in Swedish when Home Assistant's language is Swedish
+  (*Temperatur*, *Börvärde*, *Läge*, *Drift*).
+- The IoT Open Dashboard (0.12.0 or later) shows the four functions as one thermostat widget.
+
+[`examples/wall-display`](examples/wall-display) is a Home Assistant dashboard for a wall display (lights,
+thermostats, doors, Sonos) made with Home Assistant's own cards, and shows how the same entities appear in IoT Open.
 
 **Ownership.** Objects created by Home Assistant carry `ha.source` (the readable instance name) and `ha.source_id`
 (the stable instance id). Only objects with this instance's `ha.source_id` are created, updated or deleted by the

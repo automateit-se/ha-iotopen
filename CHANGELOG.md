@@ -5,6 +5,21 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+## 0.6.0
+
+### Mirroring (Home Assistant → IoT Open)
+
+- Thermostats (`climate`) are mirrored as up to four functions on the same IoT Open device: the current
+  temperature, the target temperature (`setpoint`, controllable), the HVAC mode (controllable, the available modes in
+  `ha.hvac_modes`) and the HVAC action, on `obj/ha/climate/<object_id>/<part>`. The IoT Open Dashboard shows them as
+  one thermostat widget. A thermostat mirrored by an earlier version (as one function) is replaced
+  by the new functions.
+
+### Examples
+
+- `examples/wall-display`: a Home Assistant dashboard for a wall display such as a Shelly Wall Display X2i, made with
+  Home Assistant's own cards only, and a table of how its entities are mirrored into IoT Open.
+
 ## 0.5.0
 
 ### Mirroring (Home Assistant → IoT Open)
