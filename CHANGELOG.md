@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+## 0.6.1
+
+### Mirroring (Home Assistant → IoT Open)
+
+- `min`, `max` and `step` are only seeded by Home Assistant, like `name` and `unit`. A range changed in IoT Open (for
+  example a thermostat's set point 5-25 °C instead of Home Assistant's 7-35) is kept instead of being written back on
+  the next sync. Delete the key in IoT Open to get Home Assistant's value back. Home Assistant still checks every
+  command against the entity's own limits.
+
 ## 0.6.0
 
 ### Mirroring (Home Assistant → IoT Open)
