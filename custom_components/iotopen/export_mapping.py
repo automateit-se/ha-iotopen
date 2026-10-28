@@ -698,9 +698,10 @@ def managed_keys_removed(current: dict[str, str], wanted: dict[str, str]) -> lis
 
 # Presentation keys a person may change in IoT Open (IoT Open is master for these). HA only fills them in
 # when they are missing – or when the function's type changes – so a manual edit such as
-# text_false = "Closed", a new name or visible = "false" is not reverted on the next reconcile.
-# Delete the key in IoT Open to get HA's value back.
-SEED_ONLY_KEYS = {"name", "visible", "unit"}
+# text_false = "Closed", a new name, visible = "false" or a narrower min/max is not reverted on the next
+# reconcile. Delete the key in IoT Open to get HA's value back. min/max/step only bound what a dashboard offers:
+# Home Assistant still checks every command against the entity's own limits.
+SEED_ONLY_KEYS = {"name", "visible", "unit", "min", "max", "step"}
 
 
 def is_seed_only(key: str) -> bool:
@@ -714,8 +715,8 @@ def desired_update(
     """What to write to an existing function: (type, meta to set, keys to remove).
 
     IoT Open is master for the type too. ``ha.type`` remembers the type HA suggested:
-    * same type as HA wants: structural keys (topics, ha.*, device_id, state_*, min/max …) follow HA,
-      seed-only keys (name, visible, unit, text_*) are only filled in when missing;
+    * same type as HA wants: structural keys (topics, ha.*, device_id, state_* …) follow HA,
+      seed-only keys (name, visible, unit, min, max, step, text_*) are only filled in when missing;
     * type changed in IoT Open (e.g. boolean_text -> door) while HA still suggests the same type:
       the type is kept, and so are all state_*/text_* keys (they belong to that type now);
     * HA suggests a new type (e.g. the entity got another device_class): HA's type and keys are written

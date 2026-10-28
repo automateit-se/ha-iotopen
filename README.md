@@ -193,10 +193,12 @@ thermostats, doors, Sonos) made with Home Assistant's own cards, and shows how t
 (the stable instance id). Only objects with this instance's `ha.source_id` are created, updated or deleted by the
 mirror. Your own metadata keys are left alone.
 
-**IoT Open is master for presentation.** `name`, `visible`, `unit` and `text_*` are only seeded by Home Assistant. If
-you change them, or change the function type (for example `boolean_text` → `door`), in IoT Open, the change is kept.
-Delete a key in IoT Open to get Home Assistant's value back. Structural keys (`topic_*`, `ha.*`, `device_id`,
-`min`/`max`) always follow Home Assistant.
+**IoT Open is master for presentation.** `name`, `visible`, `unit`, `min`, `max`, `step` and `text_*` are only seeded
+by Home Assistant. If you change them, or change the function type (for example `boolean_text` → `door`), in IoT Open,
+the change is kept. Delete a key in IoT Open to get Home Assistant's value back. `min`, `max` and `step` only bound
+what a dashboard offers, for example a thermostat's set point 5-25 °C: Home Assistant still checks every command
+against the entity's own limits, so a value outside them is refused. Structural keys (`topic_*`, `ha.*`,
+`device_id`) always follow Home Assistant.
 
 Tip: use a separate IoT Open user for the integration, so the IoT Open log shows who changed what.
 

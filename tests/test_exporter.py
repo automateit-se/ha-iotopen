@@ -516,3 +516,32 @@ async def test_thermostat_becomes_several_functions(
     await hass.async_block_till_done(wait_background_tasks=True)
     assert calls["set_temperature"][0].data == {"entity_id": THERMOSTAT, "temperature": 22.5}
     assert calls["set_hvac_mode"][0].data == {"entity_id": THERMOSTAT, "hvac_mode": "off"}
+
+
+async def test_thermostat_range_edited_in_iot_open_is_kept(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    lynx: LynxData,
+) -> None:
+    ent_reg = er.async_get(hass)
+    entry = ent_reg.async_get_or_create("climate", "demo", "thermostat-1", suggested_object_id="hallway")
+    ent_reg.async_update_entity(entry.entity_id, labels={_label(hass)})
+    hass.states.async_set(THERMOSTAT, "heat", HEATING)
+    await _setup(hass, config_entry, mock_mqtt)
+
+    def target() -> dict[str, Any]:
+        return next(f for f in lynx.functions[IID] if f["meta"].get("ha.part") == "target" and f["meta"].get("ha.entity_id") == THERMOSTAT)
+
+    assert (target()["meta"]["min"], target()["meta"]["max"]) == ("5", "30")
+    # narrowed in IoT Open, then a sync
+    target()["meta"].update(min="5", max="25", step="1")
+    config_entry.runtime_data.exporter.schedule_reconcile(0)
+    await _later(hass, 3)
+    assert (target()["meta"]["min"], target()["meta"]["max"], target()["meta"]["step"]) == ("5", "25", "1")
+    # deleted in IoT Open: Home Assistant's value comes back
+    del target()["meta"]["max"]
+    config_entry.runtime_data.exporter.schedule_reconcile(0)
+    await _later(hass, 3)
+    assert target()["meta"]["max"] == "30"
