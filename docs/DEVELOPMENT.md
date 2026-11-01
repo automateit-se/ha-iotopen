@@ -182,6 +182,12 @@ This follows the same pattern as IoT Open's own web dashboards:
   every value twice in IoT Open, and listening to both would run every bridged command twice. Locally a single
   `set/obj/ha/#` subscription replaces the per-function cloud subscriptions. Structure stays on REST, and the import
   side stays on the cloud for now.
+- **Offline start (local broker only).** After every successful reconcile the exporter saves the installation and
+  the function specs in a Store (`iotopen.export_<entry id>`). If IoT Open cannot be reached at setup and the
+  transport is local, the hub starts from that cache instead of raising `ConfigEntryNotReady`: no REST, no cloud
+  MQTT, no registry listeners (they would only queue REST calls). A one-minute check reloads the entry once
+  `installations()` answers, so the normal path (snapshot, reconcile, import) takes over. Cloud mode keeps the old
+  behaviour, since it cannot do anything without IoT Open anyway.
 
 ## Open questions to verify against Lynx
 

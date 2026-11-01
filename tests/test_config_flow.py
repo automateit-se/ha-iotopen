@@ -213,3 +213,65 @@ async def test_options_local_transport_needs_mqtt(
     result = await hass.config_entries.options.async_configure(result["flow_id"], user_input)
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert config_entry.options[CONF_EXPORT_TRANSPORT] == EXPORT_TRANSPORT_LOCAL
+
+
+def _suggested(result, key: str):
+    for marker in result["data_schema"].schema:
+        if marker == key:
+            return (marker.description or {}).get("suggested_value")
+    return None
+
+
+async def test_options_keep_input_after_an_error(
+    hass: HomeAssistant, mock_client: MagicMock, mock_mqtt: type[FakeMqtt], config_entry: MockConfigEntry
+) -> None:
+    """After an error the form shows what was chosen, so Local broker does not fall back to cloud."""
+    config_entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(config_entry.entry_id)
+    user_input = {
+        CONF_INSTALLATIONS: ["1001"],
+        CONF_EXPORT_INSTALLATION: "1001",
+        CONF_EXPORT_TRANSPORT: EXPORT_TRANSPORT_LOCAL,
+    }
+    result = await hass.config_entries.options.async_configure(result["flow_id"], user_input)
+    assert result["errors"] == {CONF_EXPORT_TRANSPORT: "mqtt_required"}
+    assert _suggested(result, CONF_EXPORT_TRANSPORT) == EXPORT_TRANSPORT_LOCAL
+    assert _suggested(result, CONF_EXPORT_INSTALLATION) == "1001"
+
+
+async def test_options_open_without_iot_open(
+    hass: HomeAssistant, mock_client: MagicMock, mock_mqtt: type[FakeMqtt], config_entry: MockConfigEntry
+) -> None:
+    """Without IoT Open the form opens with the saved installations and settings, and can be saved."""
+    config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        config_entry,
+        options={**config_entry.options, CONF_EXPORT_INSTALLATION: "1001", CONF_KNOWN_INSTALLATIONS: [1001, 1002]},
+    )
+    mock_client.installations.side_effect = IoTOpenConnectionError("down")
+    result = await hass.config_entries.options.async_init(config_entry.entry_id)
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "offline"}
+
+    MockConfigEntry(domain="mqtt").add_to_hass(hass)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_INSTALLATIONS: ["1001"], CONF_EXPORT_INSTALLATION: "1001", CONF_EXPORT_TRANSPORT: EXPORT_TRANSPORT_LOCAL},
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert config_entry.options[CONF_EXPORT_TRANSPORT] == EXPORT_TRANSPORT_LOCAL
+    # the installations not known offline are not forgotten
+    assert config_entry.options[CONF_KNOWN_INSTALLATIONS] == [1001, 1002]
+
+
+async def test_options_without_iot_open_or_saved_installations(
+    hass: HomeAssistant, mock_client: MagicMock, mock_mqtt: type[FakeMqtt]
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN, data={CONF_URL: URL, CONF_AUTH_METHOD: AUTH_API_KEY, CONF_TOKEN: API_KEY}, options={}
+    )
+    entry.add_to_hass(hass)
+    mock_client.installations.side_effect = IoTOpenConnectionError("down")
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "cannot_connect"

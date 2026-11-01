@@ -5,6 +5,21 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+## 0.7.0
+
+### Local broker without internet
+
+- **Starts without internet.** With *Local broker*, the integration now remembers what it mirrored last. When Home
+  Assistant starts while IoT Open cannot be reached (for example after a power cut), it mirrors those entities over the
+  edge client's broker straight away, so the local dashboard and Home Assistant keep working together. Before, the
+  integration waited for IoT Open and nothing was mirrored. It checks once a minute and reloads itself when IoT Open
+  answers, and then starts as usual (imported functions included).
+- **Configure opens without internet**, with the saved settings and the installations known so far. Before it
+  stopped with *Cannot connect to the IoT Open server*.
+- **The options form keeps what you chose after an error.** For example *Local broker* no longer falls back to
+  *IoT Open (cloud)* when the form says that the MQTT integration is missing.
+- Diagnostics show whether the integration started without IoT Open (`offline`).
+
 ## 0.6.1
 
 ### Mirroring (Home Assistant → IoT Open)

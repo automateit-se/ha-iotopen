@@ -45,6 +45,8 @@ STRUCTURE_DEBOUNCE: Final = 1.0
 UNAVAILABLE_GRACE: Final = 60.0
 # new installations do not announce themselves on an existing client_id -> rare check
 INSTALLATION_CHECK_INTERVAL: Final = timedelta(hours=1)
+# started without IoT Open (local mirroring only): how often to look whether it is back
+OFFLINE_CHECK_INTERVAL: Final = timedelta(minutes=1)
 
 
 def signal_value(entry_id: str, installation_id: int, topic: str) -> str:
