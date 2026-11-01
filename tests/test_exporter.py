@@ -17,7 +17,8 @@ from pytest_homeassistant_custom_component.common import (
 from pytest_homeassistant_custom_component.typing import MqttMockHAClient
 
 from custom_components.iotopen.const import DOMAIN
-from custom_components.iotopen.pyiotopen import Device, Function, IoTOpenForbiddenError
+from custom_components.iotopen.pyiotopen import Device, Function, IoTOpenConnectionError, IoTOpenForbiddenError
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import (
@@ -545,3 +546,67 @@ async def test_thermostat_range_edited_in_iot_open_is_kept(
     config_entry.runtime_data.exporter.schedule_reconcile(0)
     await _later(hass, 3)
     assert target()["meta"]["max"] == "30"
+
+
+async def test_start_without_iot_open_mirrors_locally(
+    hass: HomeAssistant,
+    mqtt_mock: MqttMockHAClient,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    lynx: LynxData,
+) -> None:
+    """Local mode survives a restart without internet: the saved export is mirrored over the local broker."""
+    _player(hass, _label(hass))
+    hass.states.async_set(PLAYER, "playing", PLAYING)
+    await _setup(hass, config_entry, mock_mqtt, export_transport="local")  # online: the export is saved
+    assert await hass.config_entries.async_unload(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    # restart without IoT Open
+    export_client.installations.side_effect = IoTOpenConnectionError("no internet")
+    export_client.create_function.reset_mock()
+    mqtt_mock.async_publish.reset_mock()
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert config_entry.state is ConfigEntryState.LOADED
+    hub = config_entry.runtime_data
+    assert hub.offline is True
+    assert hub.diagnostics()["offline"] is True
+    assert {s.part for s in hub.exporter.exported[PLAYER]} == {"playing", "volume", "mute", "state", "power"}
+    export_client.create_function.assert_not_called()  # nothing is created without IoT Open
+
+    # values and commands keep flowing over the local broker
+    topics = [c.args[0] for c in mqtt_mock.async_publish.call_args_list]
+    assert "obj/ha/media_player/living_room/playing" in topics
+    calls = async_mock_service(hass, "media_player", "media_pause")
+    async_fire_mqtt_message(hass, "set/obj/ha/media_player/living_room/playing", '{"value": 0}')
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert len(calls) == 1
+
+    # IoT Open answers again: the integration reloads and starts normally
+    export_client.installations.side_effect = lambda **_: lynx.installation_objects()
+    await _later(hass, 61)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert config_entry.state is ConfigEntryState.LOADED
+    assert config_entry.runtime_data.offline is False
+
+
+@pytest.mark.parametrize("transport", ["cloud", "local"])
+async def test_start_without_iot_open_needs_local_mode_and_a_saved_export(
+    hass: HomeAssistant,
+    mqtt_mock: MqttMockHAClient,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    transport: str,
+) -> None:
+    """Cloud mode, or local mode that never mirrored anything yet, waits for IoT Open as before."""
+    export_client.installations.side_effect = IoTOpenConnectionError("no internet")
+    config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        config_entry, options={**config_entry.options, "export_installation": str(IID), "export_transport": transport}
+    )
+    await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert config_entry.state is ConfigEntryState.SETUP_RETRY

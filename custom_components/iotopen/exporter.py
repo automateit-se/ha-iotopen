@@ -33,6 +33,7 @@ from homeassistant.helpers import (
     label_registry as lr,
 )
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
+from homeassistant.helpers.storage import Store
 
 from .const import DOMAIN, EXPORT_TRANSPORT_CLOUD, EXPORT_TRANSPORT_LOCAL
 from .export_mapping import (
@@ -93,6 +94,24 @@ ISSUE_EXPORT_FORBIDDEN = "export_forbidden"
 RETRY_DELAY = 60.0
 LOCAL_COMMAND_TOPIC = "set/obj/ha/#"  # bare: the edge client's broker has no client id prefix
 LOCAL_QOS = 1  # the edge client's bridge forwards obj/# and set/# with QoS 1
+CACHE_VERSION = 1
+
+
+def _cache_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
+    """What was mirrored last, so a start without IoT Open can mirror over the local broker."""
+    return Store(hass, CACHE_VERSION, f"{DOMAIN}.export_{entry_id}")
+
+
+async def async_load_cache(hass: HomeAssistant, entry_id: str) -> dict[str, Any] | None:
+    """The saved export (installation and functions), or None."""
+    data = await _cache_store(hass, entry_id).async_load()
+    if not isinstance(data, dict) or not isinstance(data.get("installation"), dict):
+        return None
+    return data
+
+
+async def async_remove_cache(hass: HomeAssistant, entry_id: str) -> None:
+    await _cache_store(hass, entry_id).async_remove()
 
 
 class IoTOpenExporter:
@@ -285,6 +304,7 @@ class IoTOpenExporter:
                 await self._reconcile()
                 self.last_error = None
                 self._clear_forbidden_issue()
+                await self._async_save_cache()
             except IoTOpenAuthError:
                 self.last_error = "auth"
                 self.hub._start_reauth()  # noqa: SLF001
@@ -299,6 +319,40 @@ class IoTOpenExporter:
                 self.last_error = str(err)
                 _LOGGER.warning("IoT Open export failed, retrying later: %s", err)
                 self.schedule_reconcile(RETRY_DELAY)
+
+    async def _async_save_cache(self) -> None:
+        """Save what is mirrored now, for a start without IoT Open (local broker only)."""
+        inst = self.installation
+        data = {
+            "installation": {"id": inst.id, "client_id": inst.client_id, "name": inst.name},
+            "exported": {
+                entity_id: [{"type": s.type, "meta": dict(s.meta)} for s in specs]
+                for entity_id, specs in self.exported.items()
+            },
+        }
+        try:
+            await _cache_store(self.hass, self.hub.entry.entry_id).async_save(data)
+        except Exception as err:  # noqa: BLE001 - the cache is a convenience, never a reason to fail
+            _LOGGER.debug("Could not save the IoT Open export cache: %s", err)
+
+    async def async_start_offline(self, cache: dict[str, Any]) -> None:
+        """Start without IoT Open: mirror the saved functions over the local broker.
+
+        Nothing is created or changed in IoT Open (that needs its API): the hub reloads the integration when IoT Open
+        can be reached again, and the normal start takes over.
+        """
+        self._ensure_label()
+        self.exported = {
+            entity_id: [FunctionSpec(entity_id, str(f.get("type", "")), dict(f.get("meta") or {})) for f in fns]
+            for entity_id, fns in (cache.get("exported") or {}).items()
+            if isinstance(fns, list)
+        }
+        self.last_error = "offline"
+        self._track_states()
+        if self.local:
+            self._local_task = self.hub.entry.async_create_background_task(
+                self.hass, self._async_start_local(), "iotopen export local mqtt (offline)"
+            )
 
     @property
     def _forbidden_issue_id(self) -> str:

@@ -213,10 +213,15 @@ send them through the edge client's own broker instead:
 - The edge client's bridge forwards the values to IoT Open and brings commands from IoT Open down, exactly as for the
   edge client's own apps. Each command arrives once.
 - The [local dashboard](https://github.com/automateit-se/edge-app-local-dashboard) and Home Assistant keep talking to
-  each other **without internet**: values update and switches work. While the bridge is down, IoT Open's history may
-  get a gap (the broker only queues a limited number of messages).
+  each other **without internet**: values update and switches work. While the bridge is down the edge client's broker
+  queues the values and sends them with their own timestamps when it is back; a long outage may leave a gap (the
+  queue is limited, see [Broker settings](https://github.com/automateit-se/edge-app-broker-settings)).
 - Devices and functions are still created and changed over IoT Open's REST API, so labelling new entities needs
   internet.
+- **A restart without internet** (power cut, update) keeps working: the integration remembers what it mirrored last
+  and starts with that, over the local broker only. Imported IoT Open functions wait until IoT Open answers. The
+  integration looks once a minute and reloads itself when IoT Open can be reached, and then starts as usual.
+- *Configure* also opens without internet, with the saved settings; what you save is used when IoT Open answers.
 
 Requirements: Home Assistant's [MQTT integration](https://www.home-assistant.io/integrations/mqtt/), connected to the
 edge client's broker (for example `localhost:1883` when Home Assistant runs on the edge client itself). The option

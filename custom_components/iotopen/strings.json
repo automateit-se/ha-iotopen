@@ -102,7 +102,8 @@
     },
     "error": {
       "no_selection": "Select at least one installation",
-      "mqtt_required": "Local broker needs Home Assistant's MQTT integration, connected to the edge client's broker. Add MQTT first."
+      "mqtt_required": "Local broker needs Home Assistant's MQTT integration, connected to the edge client's broker. Add MQTT first.",
+      "offline": "IoT Open cannot be reached right now. The saved settings are shown; what you save here is used when IoT Open answers again."
     },
     "abort": {
       "invalid_auth": "Invalid credentials or API key",

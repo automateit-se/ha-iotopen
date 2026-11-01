@@ -372,6 +372,23 @@ class IoTOpenConfigFlow(ConfigFlow, domain=DOMAIN):
 class IoTOpenOptionsFlow(OptionsFlow):
     """Change which installations are included."""
 
+    def _saved_installations(self) -> list[Installation]:
+        """Installations known without IoT Open: the running hub's, the subentries' and the saved choices."""
+        entry = self.config_entry
+        found: dict[int, Installation] = {}
+        hub = getattr(entry, "runtime_data", None)
+        for inst in getattr(hub, "available_installations", {}).values():
+            found[inst.id] = inst
+        for sub in entry.subentries.values():
+            if sub.subentry_type == SUBENTRY_INSTALLATION:
+                iid = int(sub.data[CONF_INSTALLATION_ID])
+                found.setdefault(iid, Installation(id=iid, client_id=0, name=sub.title or f"Installation {iid}"))
+        ids = [*entry.options.get(CONF_INSTALLATIONS, []), entry.options.get(CONF_EXPORT_INSTALLATION)]
+        for value in ids:
+            if value is not None and str(value).isdigit():
+                found.setdefault(int(value), Installation(id=int(value), client_id=0, name=f"Installation {value}"))
+        return list(found.values())
+
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Installation selection."""
         errors: dict[str, str] = {}
@@ -379,12 +396,17 @@ class IoTOpenOptionsFlow(OptionsFlow):
         client = IoTOpenClient(
             async_get_clientsession(self.hass), entry.data[CONF_URL], entry.data[CONF_TOKEN]
         )
+        offline = False
         try:
             installations = await client.installations()
         except IoTOpenAuthError:
             return self.async_abort(reason="invalid_auth")
         except IoTOpenError:
-            return self.async_abort(reason="cannot_connect")
+            # IoT Open cannot be reached: open the form with the saved settings and the installations known so far
+            installations = self._saved_installations()
+            if not installations:
+                return self.async_abort(reason="cannot_connect")
+            offline = True
 
         use_subentries = bool(entry.options.get(CONF_USE_SUBENTRIES))
         if user_input is not None:
@@ -407,7 +429,11 @@ class IoTOpenOptionsFlow(OptionsFlow):
                     data=data
                     | {
                         CONF_ADD_NEW_INSTALLATIONS: user_input[CONF_ADD_NEW_INSTALLATIONS],
-                        CONF_KNOWN_INSTALLATIONS: sorted(i.id for i in installations),
+                        CONF_KNOWN_INSTALLATIONS: (
+                            entry.options.get(CONF_KNOWN_INSTALLATIONS, [])
+                            if offline
+                            else sorted(i.id for i in installations)
+                        ),
                         CONF_EXPORT_INSTALLATION: user_input[CONF_EXPORT_INSTALLATION],
                         CONF_EXPORT_LABEL: user_input[CONF_EXPORT_LABEL].strip() or DEFAULT_EXPORT_LABEL,
                         CONF_EXPORT_CONTROL: user_input[CONF_EXPORT_CONTROL],
@@ -487,9 +513,12 @@ class IoTOpenOptionsFlow(OptionsFlow):
                 ),
             }
         )
+        if offline and not errors:
+            errors["base"] = "offline"
         return self.async_show_form(
             step_id="init",
-            data_schema=schema,
+            # after an error the form keeps what was entered, not the saved values
+            data_schema=self.add_suggested_values_to_schema(schema, user_input) if user_input else schema,
             errors=errors,
             description_placeholders={"instance_id": await instance_id.async_get(self.hass)},
         )

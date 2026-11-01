@@ -102,7 +102,8 @@
     },
     "error": {
       "no_selection": "Välj minst en installation",
-      "mqtt_required": "Lokal broker kräver Home Assistants MQTT-integration, ansluten till edge-klientens broker. Lägg till MQTT först."
+      "mqtt_required": "Lokal broker kräver Home Assistants MQTT-integration, ansluten till edge-klientens broker. Lägg till MQTT först.",
+      "offline": "IoT Open kan inte nås just nu. De sparade inställningarna visas; det du sparar här används när IoT Open svarar igen."
     },
     "abort": {
       "invalid_auth": "Fel inloggningsuppgifter eller API-nyckel",
