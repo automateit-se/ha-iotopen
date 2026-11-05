@@ -183,6 +183,19 @@ This follows the same pattern as IoT Open's own web dashboards:
   `<host>_<installation ids>`.
 - A numeric value without a unit, e.g. `level`, becomes a text sensor. Set `ha.state_class=measurement` to get
   statistics.
+- **Local broker for mirroring** (`export_transport = local`): values and commands use Home Assistant's own MQTT
+  integration instead of a second MQTT client in `pyiotopen`. It already handles the broker settings, TLS and
+  reconnects, and on an edge client it points at the broker with the bridge. Topics are bare there; the bridge adds
+  and strips `<client_id>/`. Only one path is active at a time: publishing both locally and in the cloud would store
+  every value twice in IoT Open, and listening to both would run every bridged command twice. Locally a single
+  `set/obj/ha/#` subscription replaces the per-function cloud subscriptions. Structure stays on REST, and the import
+  side stays on the cloud for now.
+- **Offline start (local broker only).** After every successful reconcile the exporter saves the installation and
+  the function specs in a Store (`iotopen.export_<entry id>`). If IoT Open cannot be reached at setup and the
+  transport is local, the hub starts from that cache instead of raising `ConfigEntryNotReady`: no REST, no cloud
+  MQTT, no registry listeners (they would only queue REST calls). A one-minute check reloads the entry once
+  `installations()` answers, so the normal path (snapshot, reconcile, import) takes over. Cloud mode keeps the old
+  behaviour, since it cannot do anything without IoT Open anyway.
 
 ## Open questions to verify against Lynx
 

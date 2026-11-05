@@ -303,6 +303,88 @@ def test_suffixed_topics():
     assert entity_for_topic("set/obj/ha/media_player/x/unknown") is None
 
 
+THERMOSTAT = {
+    "supported_features": 1 | 128 | 256,  # target temperature, turn off/on
+    "hvac_modes": ["off", "heat", "auto"],
+    "min_temp": 5,
+    "max_temp": 30,
+    "target_temp_step": 0.5,
+    "current_temperature": 21.3,
+    "temperature": 21.5,
+    "hvac_action": "heating",
+    "temperature_unit": "°C",
+}
+
+
+def _climate_specs(attrs, **kwargs):
+    from custom_components.iotopen.export_mapping import function_specs
+
+    return {s.part: s for s in function_specs("climate.hallway", "Hallway", attrs, "src", **kwargs)}
+
+
+def test_climate_specs():
+    specs = _climate_specs(THERMOSTAT, iot_device_id=7, language="sv")
+    assert list(specs) == ["current", "target", "mode", "action"]
+    current = specs["current"]
+    assert current.type == "temperature" and current.meta["unit"] == "°C"
+    assert current.meta["topic_read"] == "obj/ha/climate/hallway/current" and "topic_write" not in current.meta
+    assert current.meta["name"] == "Hallway Temperatur" and current.meta["device_id"] == "7"
+    target = specs["target"]
+    assert target.type == "setpoint" and target.meta["name"] == "Hallway Börvärde"
+    assert (target.meta["min"], target.meta["max"], target.meta["step"]) == ("5", "30", "0.5")
+    assert target.meta["topic_write"] == "set/obj/ha/climate/hallway/target"
+    mode = specs["mode"]
+    assert mode.type == "text" and mode.meta["ha.hvac_modes"] == "off,heat,auto"
+    assert mode.meta["topic_write"] == "set/obj/ha/climate/hallway/mode"
+    assert specs["action"].type == "text" and "topic_write" not in specs["action"].meta
+    assert _climate_specs(THERMOSTAT)["target"].meta["name"] == "Hallway Target temperature"
+
+
+def test_climate_specs_minimal_and_read_only():
+    assert list(_climate_specs({})) == ["mode"]
+    assert list(_climate_specs({"current_temperature": 20})) == ["current", "mode"]
+    assert list(_climate_specs({}, keep_parts={"target", "current"})) == ["current", "target", "mode"]
+    assert _climate_specs({"current_temperature": 68, "temperature_unit": "°F"})["current"].meta["unit"] == "°F"
+    read_only = _climate_specs(THERMOSTAT, allow_control=False)
+    assert all("topic_write" not in s.meta for s in read_only.values())
+
+
+def test_climate_value_and_command():
+    from custom_components.iotopen.export_mapping import climate_command, part_command, part_value
+
+    assert part_value("climate.hallway", "current", "heat", THERMOSTAT) == (21.3, "")
+    assert part_value("climate.hallway", "target", "heat", THERMOSTAT) == (21.5, "")
+    assert part_value("climate.hallway", "target", "heat", {**THERMOSTAT, "temperature": 21.0}) == (21, "")
+    assert part_value("climate.hallway", "target", "off", {**THERMOSTAT, "temperature": None}) is None
+    assert part_value("climate.hallway", "mode", "heat", THERMOSTAT) == ("heat", "heat")
+    assert part_value("climate.hallway", "action", "heat", THERMOSTAT) == ("heating", "heating")
+    assert part_value("climate.hallway", "mode", "unavailable", THERMOSTAT) is None
+    assert part_command("climate.hallway", "target", "22.5") == ("climate", "set_temperature", {"temperature": 22.5})
+    assert climate_command("target", "warm") is None
+    assert climate_command("mode", "Heat") == ("climate", "set_hvac_mode", {"hvac_mode": "heat"})
+    assert climate_command("current", 20) is None and climate_command("action", "idle") is None
+    assert entity_for_topic("set/obj/ha/climate/hallway/target") == "climate.hallway"
+
+
+def test_range_edited_in_iot_open_is_kept():
+    """min/max/step are seeded by HA once; a narrower range set in IoT Open stays, a deleted key comes back."""
+    from custom_components.iotopen.export_mapping import desired_update, function_specs
+
+    spec = function_specs("climate.cellar", "Cellar", THERMOSTAT, "x")[1]
+    assert spec.part == "target" and (spec.meta["min"], spec.meta["max"], spec.meta["step"]) == ("5", "30", "0.5")
+    edited = {**spec.meta, "min": "5", "max": "25", "step": "1"}
+    type_, wanted, removed = desired_update(edited, "setpoint", spec)
+    assert type_ == "setpoint" and removed == []
+    assert "min" not in wanted and "max" not in wanted and "step" not in wanted
+    assert not meta_differs(edited, wanted)
+    # deleted in IoT Open: HA's value is written again
+    _, wanted, _ = desired_update({k: v for k, v in edited.items() if k != "max"}, "setpoint", spec)
+    assert wanted["max"] == "30" and "min" not in wanted
+    # the topics still follow HA
+    _, wanted, _ = desired_update({**edited, "topic_write": "set/obj/other"}, "setpoint", spec)
+    assert wanted["topic_write"] == "set/obj/ha/climate/cellar/target"
+
+
 def test_media_player_source():
     from custom_components.iotopen.export_mapping import media_command, media_value
 

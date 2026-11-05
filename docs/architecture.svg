@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 900" width="1280" height="900" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 1135" width="1280" height="1135" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
   <title>IoT Open for Home Assistant – architecture</title>
   <defs>
     <marker id="a-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
@@ -14,6 +14,7 @@
       .halo { fill: none; stroke: #ffffff; stroke-width: 7; }
       .blue { fill: none; stroke: #2563eb; stroke-width: 2; }
       .orange { fill: none; stroke: #d97706; stroke-width: 2; }
+      .orange-d { fill: none; stroke: #d97706; stroke-width: 2; stroke-dasharray: 6 4; }
       .grey { fill: none; stroke: #6b7280; stroke-width: 2; }
       .badge-b { fill: #2563eb; } .badge-o { fill: #d97706; }
       .bn { font-size: 12px; font-weight: 700; fill: #ffffff; text-anchor: middle; }
@@ -21,9 +22,9 @@
     </style>
   </defs>
 
-  <rect x="0.5" y="0.5" width="1279" height="899" rx="16" fill="#ffffff" stroke="#e5e7eb"/>
+  <rect x="0.5" y="0.5" width="1279" height="1134" rx="16" fill="#ffffff" stroke="#e5e7eb"/>
   <text x="40" y="48" font-size="22" font-weight="700" fill="#111827">IoT Open ↔ Home Assistant – how the integration works</text>
-  <text x="40" y="74" class="t"><tspan fill="#2563eb" font-weight="700">Blue</tspan>: IoT Open → Home Assistant (import, live values, control).   <tspan fill="#d97706" font-weight="700">Orange</tspan>: Home Assistant → IoT Open (mirroring of labelled entities).</text>
+  <text x="40" y="74" class="t"><tspan fill="#2563eb" font-weight="700">Blue</tspan>: IoT Open → Home Assistant (import, live values, control).   <tspan fill="#d97706" font-weight="700">Orange</tspan>: Home Assistant → IoT Open (mirroring of labelled entities).   <tspan fill="#d97706" font-weight="700">Dashed</tspan>: the local broker option.</text>
 
   <!-- Column 1: IoT Open -->
   <rect x="30" y="100" width="280" height="620" rx="12" fill="#eff6ff" stroke="#bfdbfe"/>
@@ -81,7 +82,7 @@
 
   <rect x="740" y="150" width="490" height="58" rx="8" class="box" stroke="#5eead4"/>
   <text x="756" y="174" class="b">Config entry <tspan class="t" font-weight="400">(one IoT Open account: API key or login)</tspan></text>
-  <text x="756" y="195" class="s">one subentry per installation · options: label, instance name, import mode, control</text>
+  <text x="756" y="195" class="s">subentry per installation · options: label, instance, import mode, control, transport</text>
 
   <rect x="740" y="225" width="300" height="150" rx="8" class="box" stroke="#5eead4"/>
   <text x="756" y="250" class="b">IoTOpenHub</text>
@@ -118,6 +119,7 @@
   <text x="756" y="629" class="t">set/obj/ha/… → HA service call</text>
   <text x="756" y="653" class="s">IoT Open stays master for type, name,</text>
   <text x="756" y="669" class="s">visible, unit and text_* once seeded</text>
+  <text x="756" y="689" class="s">HTTP 403 → a repair in Settings → Repairs</text>
 
   <rect x="1072" y="500" width="158" height="200" rx="8" class="box" stroke="#d1d5db"/>
   <text x="1086" y="525" class="b">HA core</text>
@@ -163,24 +165,66 @@
   <circle cx="700" cy="600" r="10" class="badge-o"/><text x="700" y="604" class="bn">6</text>
   <circle cx="700" cy="660" r="10" class="badge-o"/><text x="700" y="664" class="bn">7</text>
 
-  <!-- legend -->
-  <line x1="30" y1="745" x2="1250" y2="745" stroke="#e5e7eb"/>
-  <g class="t">
-    <circle cx="44" cy="775" r="10" class="badge-b"/><text x="44" y="779" class="bn">1</text>
-    <text x="62" y="779">Start-up, reload and reconnect: REST snapshot of devices, functions and latest values.</text>
-    <circle cx="44" cy="805" r="10" class="badge-b"/><text x="44" y="809" class="bn">2</text>
-    <text x="62" y="809">Live values on &lt;cid&gt;/obj/…; &lt;cid&gt;/evt/…/updated re-reads the installation after 1 s.</text>
-    <circle cx="44" cy="835" r="10" class="badge-b"/><text x="44" y="839" class="bn">3</text>
-    <text x="62" y="839">The hub creates, updates or removes entities using mapping.py.</text>
-    <circle cx="44" cy="865" r="10" class="badge-b"/><text x="44" y="869" class="bn">4</text>
-    <text x="62" y="869">Switching an entity publishes state_on/state_off to &lt;cid&gt;/&lt;topic_write&gt; (set/obj/…).</text>
 
-    <circle cx="684" cy="775" r="10" class="badge-o"/><text x="684" y="779" class="bn">5</text>
-    <text x="702" y="779">Labelled entities and devices are created as IoT Open devices/functions.</text>
-    <circle cx="684" cy="805" r="10" class="badge-o"/><text x="684" y="809" class="bn">6</text>
-    <text x="702" y="809">Their HA states are published to &lt;cid&gt;/obj/ha/&lt;domain&gt;/&lt;object_id&gt;.</text>
-    <circle cx="684" cy="835" r="10" class="badge-o"/><text x="684" y="839" class="bn">7</text>
-    <text x="702" y="839">Commands on &lt;cid&gt;/set/obj/ha/… call the HA service (when control is allowed).</text>
-    <text x="684" y="869" class="s">&lt;cid&gt; = the installation's client_id. Functions created by HA are skipped by the import side.</text>
+  <!-- Local network: edge client and HA's MQTT integration (transport = local) -->
+  <rect x="30" y="740" width="610" height="160" rx="12" fill="#fff7ed" stroke="#fed7aa"/>
+  <text x="50" y="768" class="h" fill="#9a3412">IoT Open edge client</text>
+  <text x="370" y="768" class="s">optional, on the LAN, e.g. a Raspberry Pi</text>
+
+  <rect x="50" y="782" width="280" height="104" rx="8" class="box" stroke="#fdba74"/>
+  <text x="66" y="805" class="b">Mosquitto + bridge</text>
+  <text x="66" y="826" class="m">obj/… set/… cmd/… evt/…</text>
+  <text x="66" y="843" class="s">bare topics, no &lt;cid&gt; prefix</text>
+  <text x="66" y="866" class="t">bridge ⇄ &lt;cid&gt;/obj|set|cmd|evt/#</text>
+  <text x="66" y="881" class="s">QoS 1, adds/strips &lt;cid&gt;/</text>
+
+  <rect x="360" y="782" width="260" height="50" rx="8" class="box" stroke="#fdba74"/>
+  <text x="376" y="803" class="b">Edge apps</text>
+  <text x="376" y="822" class="t">e.g. the local dashboard (:8090)</text>
+
+  <rect x="720" y="740" width="530" height="160" rx="12" fill="#f0fdfa" stroke="#99f6e4"/>
+  <text x="740" y="768" class="h" fill="#134e4a">MQTT integration <tspan class="s" font-weight="400">(HA core)</tspan></text>
+  <rect x="740" y="782" width="490" height="104" rx="8" class="box" stroke="#5eead4"/>
+  <text x="756" y="805" class="b">Used by the exporter when transport = local</text>
+  <text x="756" y="827" class="t">connected to the edge client's broker (e.g. localhost:1883)</text>
+  <text x="756" y="847" class="t">publishes obj/ha/… (QoS 1) · subscribes set/obj/ha/#</text>
+  <text x="756" y="870" class="s">only one path is active: nothing goes over the cloud MQTT then</text>
+
+  <!-- bridge: edge broker <-> IoT Open broker -->
+  <path d="M315,780 V752 H350 V482 H292" class="halo"/>
+  <path d="M315,780 V752 H350 V482 H292" class="grey" marker-start="url(#a-grey)" marker-end="url(#a-grey)"/>
+  <text x="358" y="600" class="s">bridge</text>
+  <text x="358" y="615" class="s">TLS 8883</text>
+  <!-- HA MQTT integration <-> edge broker -->
+  <line x1="738" y1="858" x2="332" y2="858" class="halo"/>
+  <line x1="738" y1="858" x2="332" y2="858" class="grey" marker-start="url(#a-grey)" marker-end="url(#a-grey)"/>
+  <text x="535" y="851" class="s" text-anchor="middle">MQTT on the LAN</text>
+  <!-- edge apps <-> edge broker -->
+  <line x1="358" y1="807" x2="332" y2="807" class="grey" marker-start="url(#a-grey)" marker-end="url(#a-grey)"/>
+  <!-- 8 exporter <-> HA MQTT integration -->
+  <line x1="1000" y1="702" x2="1000" y2="780" class="orange-d" marker-start="url(#a-orange)" marker-end="url(#a-orange)"/>
+  <circle cx="1022" cy="741" r="10" class="badge-o"/><text x="1022" y="745" class="bn">8</text>
+
+  <!-- legend -->
+  <line x1="30" y1="955" x2="1250" y2="955" stroke="#e5e7eb"/>
+  <g class="t">
+    <circle cx="44" cy="985" r="10" class="badge-b"/><text x="44" y="989" class="bn">1</text>
+    <text x="62" y="989">Start-up, reload and reconnect: REST snapshot of devices, functions and latest values.</text>
+    <circle cx="44" cy="1015" r="10" class="badge-b"/><text x="44" y="1019" class="bn">2</text>
+    <text x="62" y="1019">Live values on &lt;cid&gt;/obj/…; &lt;cid&gt;/evt/…/updated re-reads the installation after 1 s.</text>
+    <circle cx="44" cy="1045" r="10" class="badge-b"/><text x="44" y="1049" class="bn">3</text>
+    <text x="62" y="1049">The hub creates, updates or removes entities using mapping.py.</text>
+    <circle cx="44" cy="1075" r="10" class="badge-b"/><text x="44" y="1079" class="bn">4</text>
+    <text x="62" y="1079">Switching an entity publishes state_on/state_off to &lt;cid&gt;/&lt;topic_write&gt; (set/obj/…).</text>
+
+    <circle cx="684" cy="985" r="10" class="badge-o"/><text x="684" y="989" class="bn">5</text>
+    <text x="702" y="989">Labelled entities and devices are created as IoT Open devices/functions.</text>
+    <circle cx="684" cy="1015" r="10" class="badge-o"/><text x="684" y="1019" class="bn">6</text>
+    <text x="702" y="1019">Their HA states are published to &lt;cid&gt;/obj/ha/&lt;domain&gt;/&lt;object_id&gt;.</text>
+    <circle cx="684" cy="1045" r="10" class="badge-o"/><text x="684" y="1049" class="bn">7</text>
+    <text x="702" y="1049">Commands on &lt;cid&gt;/set/obj/ha/… call the HA service (when control is allowed).</text>
+    <circle cx="684" cy="1075" r="10" class="badge-o"/><text x="684" y="1079" class="bn">8</text>
+    <text x="702" y="1079">Local broker option: 6 and 7 go through HA's MQTT integration and the edge broker.</text>
   </g>
+  <text x="40" y="1115" class="s">&lt;cid&gt; = the installation's client_id. Functions created by HA are skipped by the import side. With the local broker, mirrored entities and the local dashboard keep working without internet; structure still uses REST.</text>
 </svg>

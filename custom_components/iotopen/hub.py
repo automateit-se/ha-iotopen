@@ -56,6 +56,7 @@ from .pyiotopen import (
 from .const import (
     CONF_ADD_NEW_INSTALLATIONS,
     CONF_EXPORT_CATEGORIZED,
+    CONF_EXPORT_TRANSPORT,
     CONF_EXPORT_CONTROL,
     CONF_IMPORT_MODE,
     CONF_INSTALLATION_ID,
@@ -68,10 +69,13 @@ from .const import (
     CONF_EXPORT_LABEL,
     CONF_INSTALLATIONS,
     DEFAULT_EXPORT_LABEL,
+    DEFAULT_EXPORT_TRANSPORT,
     EXPORT_NONE,
+    EXPORT_TRANSPORT_LOCAL,
     CONF_KNOWN_INSTALLATIONS,
     DOMAIN,
     INSTALLATION_CHECK_INTERVAL,
+    OFFLINE_CHECK_INTERVAL,
     MANUFACTURER,
     STRUCTURE_DEBOUNCE,
     UNAVAILABLE_GRACE,
@@ -130,6 +134,7 @@ class IoTOpenHub:
         self._connect_listeners: list[Callable[[], None]] = []
         self.extra_topics: set[str] = set()
         self.exporter: Any = None  # IoTOpenExporter when mirroring is enabled
+        self.offline = False  # started without IoT Open: local mirroring only, reload when it is back
 
     # ------------------------------------------------------------------ lifecycle
     @property
@@ -142,6 +147,7 @@ class IoTOpenHub:
             self.entry.options.get(CONF_EXPORT_LABEL, DEFAULT_EXPORT_LABEL),
             bool(self.entry.options.get(CONF_EXPORT_CONTROL, True)),
             bool(self.entry.options.get(CONF_EXPORT_CATEGORIZED, False)),
+            self.export_transport,
             self.instance_name,
             self.import_mode,
         )
@@ -151,6 +157,11 @@ class IoTOpenHub:
         """Short name used in ``ha.destination`` (defaults to the slugified HA location name)."""
         name = str(self.entry.options.get(CONF_INSTANCE_NAME) or "").strip()
         return name or slugify(self.hass.config.location_name or "home") or "home"
+
+    @property
+    def export_transport(self) -> str:
+        """``cloud`` (IoT Open's MQTT) or ``local`` (HA's MQTT integration, the edge client's broker)."""
+        return str(self.entry.options.get(CONF_EXPORT_TRANSPORT, DEFAULT_EXPORT_TRANSPORT))
 
     @property
     def import_mode(self) -> str:
@@ -251,6 +262,8 @@ class IoTOpenHub:
         except IoTOpenAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
         except IoTOpenError as err:
+            if await self._async_setup_offline(err):
+                return
             raise ConfigEntryNotReady(f"Cannot reach IoT Open: {err}") from err
 
         self.available_installations = available
@@ -292,6 +305,56 @@ class IoTOpenHub:
         )
         await self._async_start_exporter()
 
+    async def _async_setup_offline(self, err: Exception) -> bool:
+        """Start without IoT Open when mirroring goes over the local broker and a saved export exists.
+
+        Values and commands of the mirrored entities keep flowing between Home Assistant and the edge client
+        (and its local dashboard). Imported functions wait. Once IoT Open answers, the entry is reloaded and starts
+        normally. Returns False when this is not possible; setup is then retried by Home Assistant as before.
+        """
+        if self.export_transport != EXPORT_TRANSPORT_LOCAL or self.export_installation_id is None:
+            return False
+        from .exporter import IoTOpenExporter, async_load_cache  # noqa: PLC0415 - avoid import cycle
+
+        cache = await async_load_cache(self.hass, self.entry.entry_id)
+        saved = (cache or {}).get("installation") or {}
+        if not cache or int(saved.get("id") or 0) != self.export_installation_id:
+            return False
+        installation = Installation(
+            id=int(saved["id"]), client_id=int(saved.get("client_id") or 0), name=str(saved.get("name") or "")
+        )
+        self.offline = True
+        self.available_installations = {installation.id: installation}
+        self.loaded_options_key = self.options_key
+        self.exporter = IoTOpenExporter(
+            self.hass,
+            self,
+            installation,
+            self.entry.options.get(CONF_EXPORT_LABEL, DEFAULT_EXPORT_LABEL),
+            bool(self.entry.options.get(CONF_EXPORT_CONTROL, True)),
+            bool(self.entry.options.get(CONF_EXPORT_CATEGORIZED, False)),
+            self.export_transport,
+        )
+        await self.exporter.async_start_offline(cache)
+        _LOGGER.warning(
+            "IoT Open cannot be reached (%s): mirroring %d entities over the local broker until it can", err,
+            len(self.exporter.exported),
+        )
+
+        async def _check(_now: Any) -> None:
+            try:
+                await self.client.installations()
+            except IoTOpenAuthError:
+                self._start_reauth()
+                return
+            except IoTOpenError:
+                return
+            _LOGGER.info("IoT Open can be reached again: reloading the integration")
+            self.hass.config_entries.async_schedule_reload(self.entry.entry_id)
+
+        self._unsubs.append(async_track_time_interval(self.hass, _check, OFFLINE_CHECK_INTERVAL))
+        return True
+
     async def _async_start_exporter(self) -> None:
         """Mirror labelled HA entities into the chosen installation (if any).
 
@@ -318,6 +381,7 @@ class IoTOpenHub:
             self.entry.options.get(CONF_EXPORT_LABEL, DEFAULT_EXPORT_LABEL),
             bool(self.entry.options.get(CONF_EXPORT_CONTROL, True)),
             bool(self.entry.options.get(CONF_EXPORT_CATEGORIZED, False)),
+            self.export_transport,
         )
         try:
             await self.exporter.async_start()
@@ -829,6 +893,7 @@ class IoTOpenHub:
                 "id": self.source_id,
                 "import_mode": self.import_mode,
             },
+            "offline": self.offline,
             "export": self.exporter.diagnostics() if self.exporter else None,
             "mqtt": {
                 "state": self.mqtt.state,

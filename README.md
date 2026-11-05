@@ -56,13 +56,15 @@ If the key is revoked or the token expires, Home Assistant starts a re-authentic
 |---|---|
 | Mirror Home Assistant into installation | The IoT Open installation that labelled entities are mirrored into. `-` turns mirroring off. |
 | Label that selects what is mirrored | Default `IoT Open`. The label is created automatically. |
-| Allow IoT Open to control Home Assistant | Mirrored switches, lights, locks, covers, numbers, media players, … get a `topic_write`. |
+| Allow IoT Open to control Home Assistant | Mirrored switches, lights, locks, covers, numbers, media players, thermostats, … get a `topic_write`. |
 | Mirror diagnostic and configuration entities of labelled devices | Off by default. See [Mirroring](#mirroring-home-assistant--iot-open). |
+| Send values and receive commands via | *IoT Open (cloud)* (default) or *Local broker*. See [Local broker](#local-broker-mirroring-without-internet). |
 | This Home Assistant's name in IoT Open | Instance name used in `ha.source` and `ha.destination`. |
 | Import from IoT Open | *Only tagged* (default): only devices/functions whose `ha.destination` names this instance. *All*: every function in the selected installations. |
 
 The API key's user needs write access to devices and functions in the mirror installation. Without it, IoT Open
-answers HTTP 403.
+answers HTTP 403, and Home Assistant shows a repair under *Settings → Repairs* that names the installation. Mirroring
+is retried every minute, and the repair disappears by itself once the user has been given access.
 
 ## Import: IoT Open → Home Assistant
 
@@ -174,16 +176,65 @@ A button (`button`, `input_button`) or scene publishes value `1` when it is pres
 the press in `msg`. Home Assistant keeps the time of the last press as the state, so a restart, a reconnect or a
 restored state does not count as a press. Send any true value (`1`, `"on"`, `true`) to `set/…` to press it.
 
+### Thermostats
+
+A thermostat (`climate`) becomes up to four functions on the same IoT Open device, on
+`obj/ha/climate/<object_id>/<part>`:
+
+| Function | Type | Topic | Control (`set/…`) |
+|---|---|---|---|
+| *&lt;name&gt; Temperature* | `temperature`, read only | `…/current` | - |
+| *&lt;name&gt; Target temperature* | `setpoint`, with `min`, `max` and `step` from Home Assistant | `…/target` | `set_temperature` |
+| *&lt;name&gt; Mode* | text (`off`, `heat`, `cool`, `auto`, …), the modes the thermostat offers in `ha.hvac_modes` | `…/mode` | `set_hvac_mode` |
+| *&lt;name&gt; Action* | text, read only (`heating`, `idle`, `off`, …) | `…/action` | - |
+
+- *Mode* and *Action* send the text both as the value and in `msg`.
+- *Mode* is always created; the others when the thermostat reports the value. An unavailable thermostat keeps its
+  functions.
+- The unit is Home Assistant's temperature unit. The names are in Swedish when Home Assistant's language is Swedish
+  (*Temperatur*, *Börvärde*, *Läge*, *Drift*).
+- The IoT Open Dashboard (0.12.0 or later) shows the four functions as one thermostat widget.
+
+[`examples/wall-display`](examples/wall-display) is a Home Assistant dashboard for a wall display (lights,
+thermostats, doors, Sonos) made with Home Assistant's own cards, and shows how the same entities appear in IoT Open.
+
 **Ownership.** Objects created by Home Assistant carry `ha.source` (the readable instance name) and `ha.source_id`
 (the stable instance id). Only objects with this instance's `ha.source_id` are created, updated or deleted by the
 mirror. Your own metadata keys are left alone.
 
-**IoT Open is master for presentation.** `name`, `visible`, `unit` and `text_*` are only seeded by Home Assistant. If
-you change them, or change the function type (for example `boolean_text` → `door`), in IoT Open, the change is kept.
-Delete a key in IoT Open to get Home Assistant's value back. Structural keys (`topic_*`, `ha.*`, `device_id`,
-`min`/`max`) always follow Home Assistant.
+**IoT Open is master for presentation.** `name`, `visible`, `unit`, `min`, `max`, `step` and `text_*` are only seeded
+by Home Assistant. If you change them, or change the function type (for example `boolean_text` → `door`), in IoT Open,
+the change is kept. Delete a key in IoT Open to get Home Assistant's value back. `min`, `max` and `step` only bound
+what a dashboard offers, for example a thermostat's set point 5-25 °C: Home Assistant still checks every command
+against the entity's own limits, so a value outside them is refused. Structural keys (`topic_*`, `ha.*`,
+`device_id`) always follow Home Assistant.
 
 Tip: use a separate IoT Open user for the integration, so the IoT Open log shows who changed what.
+
+### Local broker: mirroring without internet
+
+By default, mirrored values and commands go over IoT Open's cloud MQTT. When the mirror installation has an
+**edge client on the same network** (for example an IoT Open Raspberry Pi), choose *Local broker* under *Configure* to
+send them through the edge client's own broker instead:
+
+- Home Assistant publishes `obj/ha/…` on the edge client's broker (without the client id prefix) and listens to
+  `set/obj/ha/#` there.
+- The edge client's bridge forwards the values to IoT Open and brings commands from IoT Open down, exactly as for the
+  edge client's own apps. Each command arrives once.
+- The [local dashboard](https://github.com/automateit-se/edge-app-local-dashboard) and Home Assistant keep talking to
+  each other **without internet**: values update and switches work. While the bridge is down the edge client's broker
+  queues the values and sends them with their own timestamps when it is back; a long outage may leave a gap (the
+  queue is limited, see [Broker settings](https://github.com/automateit-se/edge-app-broker-settings)).
+- Devices and functions are still created and changed over IoT Open's REST API, so labelling new entities needs
+  internet.
+- **A restart without internet** (power cut, update) keeps working: the integration remembers what it mirrored last
+  and starts with that, over the local broker only. Imported IoT Open functions wait until IoT Open answers. The
+  integration looks once a minute and reloads itself when IoT Open can be reached, and then starts as usual.
+- *Configure* also opens without internet, with the saved settings; what you save is used when IoT Open answers.
+
+Requirements: Home Assistant's [MQTT integration](https://www.home-assistant.io/integrations/mqtt/), connected to the
+edge client's broker (for example `localhost:1883` when Home Assistant runs on the edge client itself). The option
+cannot be chosen without it. Importing functions from IoT Open still uses the cloud.
 
 ## Diagnostics
 
@@ -216,4 +267,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how to work on the code and make a re
 Report bugs and ideas under [Issues](https://github.com/automateit-se/ha-iotopen/issues). Please attach the
 diagnostics file (see above) to bug reports.
 
-Licensed under [Apache 2.0](LICENSE).
+Licensed under [MIT](LICENSE).

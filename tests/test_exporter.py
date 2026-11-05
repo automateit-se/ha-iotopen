@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -9,14 +10,23 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
+    async_fire_mqtt_message,
     async_fire_time_changed,
     async_mock_service,
 )
+from pytest_homeassistant_custom_component.typing import MqttMockHAClient
 
-from custom_components.iotopen.pyiotopen import Device, Function
+from custom_components.iotopen.const import DOMAIN
+from custom_components.iotopen.pyiotopen import Device, Function, IoTOpenConnectionError, IoTOpenForbiddenError
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr, entity_registry as er, label_registry as lr
+from homeassistant.helpers import (
+    device_registry as dr,
+    entity_registry as er,
+    issue_registry as ir,
+    label_registry as lr,
+)
 from homeassistant.util import dt as dt_util
 
 from .conftest import FakeMqtt, LynxData
@@ -333,6 +343,273 @@ async def test_diagnostic_entities_of_labelled_devices(
     await _setup(hass, config_entry, mock_mqtt, export_categorized=include)
     mirrored = {f["meta"].get("ha.entity_id") for f in lynx.functions[IID]} - {None}
     assert mirrored == expected
+
+
+async def test_forbidden_export_raises_repair_issue(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    lynx: LynxData,
+) -> None:
+    """A 403 from IoT Open shows up in Repairs and disappears once access is granted."""
+    _player(hass, _label(hass))
+    hass.states.async_set(PLAYER, "playing", PLAYING)
+    create_function = export_client.create_function.side_effect
+    export_client.create_function.side_effect = IoTOpenForbiddenError(
+        403, "Permission required to access this resource."
+    )
+    await _setup(hass, config_entry, mock_mqtt)
+
+    issue_id = f"export_forbidden_{config_entry.entry_id}"
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    assert issue.translation_key == "export_forbidden"
+    assert issue.severity == ir.IssueSeverity.ERROR
+    assert issue.translation_placeholders["installation_id"] == str(IID)
+    assert issue.translation_placeholders["url"].endswith(f"/installations/{IID}")
+    assert config_entry.runtime_data.exporter.last_error.startswith("HTTP 403")
+
+    # still forbidden: the issue stays and the exporter keeps retrying
+    await _later(hass, 61)
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+
+    # the user got write access: the next retry mirrors the player and clears the issue
+    export_client.create_function.side_effect = create_function
+    await _later(hass, 61)
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+    assert set(_own_functions(lynx)) == {"playing", "volume", "mute", "state", "power"}
+
+
+async def test_forbidden_issue_removed_on_unload(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+) -> None:
+    """Stopping mirroring (unload or another installation) removes a stale issue."""
+    _player(hass, _label(hass))
+    hass.states.async_set(PLAYER, "playing", PLAYING)
+    export_client.create_device.side_effect = IoTOpenForbiddenError(403, "Permission required")
+    export_client.create_function.side_effect = IoTOpenForbiddenError(403, "Permission required")
+    await _setup(hass, config_entry, mock_mqtt)
+    issue_id = f"export_forbidden_{config_entry.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+
+    assert await hass.config_entries.async_unload(config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_local_transport_uses_the_edge_broker(
+    hass: HomeAssistant,
+    mqtt_mock: MqttMockHAClient,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    lynx: LynxData,
+) -> None:
+    """Local mode: values and commands over HA's MQTT integration, with bare topics."""
+    _player(hass, _label(hass))
+    hass.states.async_set(PLAYER, "playing", PLAYING)
+    cloud = await _setup(hass, config_entry, mock_mqtt, export_transport="local")
+    calls = {service: async_mock_service(hass, "media_player", service) for service in ("media_play", "media_pause")}
+
+    # structure still goes over REST
+    assert set(_own_functions(lynx)) == {"playing", "volume", "mute", "state", "power"}
+
+    # values: bare topic on the local broker, QoS 1, nothing on IoT Open's cloud MQTT
+    local = {c.args[0]: c.args[1:] for c in mqtt_mock.async_publish.call_args_list}
+    payload, qos, retain = local["obj/ha/media_player/living_room/playing"]
+    assert json.loads(payload)["value"] == 1
+    assert (qos, retain) == (1, False)
+    assert not [t for t, _ in cloud.published if "/obj/ha/" in t]
+    assert not [t for t in cloud.subscriptions if "/set/obj/ha/" in t]
+
+    # a state change is published locally
+    mqtt_mock.async_publish.reset_mock()
+    hass.states.async_set(PLAYER, "paused", PLAYING)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    topics = [c.args[0] for c in mqtt_mock.async_publish.call_args_list]
+    assert "obj/ha/media_player/living_room/playing" in topics
+
+    # a command on the edge broker (local dashboard, or bridged down from IoT Open) calls HA once
+    async_fire_mqtt_message(hass, "set/obj/ha/media_player/living_room/playing", '{"value": 1}')
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert len(calls["media_play"]) == 1
+
+    # the same command arriving over the cloud connection is not executed a second time
+    cloud.push(f"{CLIENT_ID}/set/obj/ha/media_player/living_room/playing", {"value": 0})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert not calls["media_pause"]
+
+
+async def test_cloud_transport_ignores_the_local_broker(
+    hass: HomeAssistant,
+    mqtt_mock: MqttMockHAClient,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+) -> None:
+    """Default mode: HA's MQTT integration is neither used for values nor for commands."""
+    _player(hass, _label(hass))
+    hass.states.async_set(PLAYER, "playing", PLAYING)
+    cloud = await _setup(hass, config_entry, mock_mqtt)
+    calls = async_mock_service(hass, "media_player", "media_play")
+
+    assert not [c for c in mqtt_mock.async_publish.call_args_list if c.args[0].startswith("obj/ha/")]
+    assert _published(cloud, "playing")
+    async_fire_mqtt_message(hass, "set/obj/ha/media_player/living_room/playing", '{"value": 1}')
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert not calls
+
+
+THERMOSTAT = "climate.hallway"
+HEATING = {
+    "friendly_name": "Hallway",
+    "supported_features": 1,
+    "hvac_modes": ["off", "heat"],
+    "min_temp": 5,
+    "max_temp": 30,
+    "target_temp_step": 0.5,
+    "current_temperature": 20.5,
+    "temperature": 21,
+    "hvac_action": "heating",
+}
+
+
+async def test_thermostat_becomes_several_functions(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    lynx: LynxData,
+) -> None:
+    label_id = _label(hass)
+    ent_reg = er.async_get(hass)
+    entry = ent_reg.async_get_or_create("climate", "demo", "thermostat-1", suggested_object_id="hallway")
+    ent_reg.async_update_entity(entry.entity_id, labels={label_id})
+    hass.states.async_set(THERMOSTAT, "heat", HEATING)
+    mqtt = await _setup(hass, config_entry, mock_mqtt)
+
+    functions = {f["meta"]["ha.part"]: f for f in lynx.functions[IID] if f["meta"].get("ha.entity_id") == THERMOSTAT}
+    assert set(functions) == {"current", "target", "mode", "action"}
+    assert functions["target"]["type"] == "setpoint" and functions["target"]["meta"]["unit"] == "°C"
+    assert functions["mode"]["meta"]["ha.hvac_modes"] == "off,heat"
+
+    def published(part: str) -> list[Any]:
+        topic = f"{CLIENT_ID}/obj/ha/climate/hallway/{part}"
+        return [p["value"] for t, p in mqtt.published if t == topic]
+
+    assert published("current") == [20.5] and published("target") == [21]
+    assert published("mode") == ["heat"] and published("action") == ["heating"]
+
+    hass.states.async_set(THERMOSTAT, "heat", {**HEATING, "current_temperature": 20.7, "hvac_action": "idle"})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert published("current") == [20.5, 20.7] and published("action") == ["heating", "idle"]
+    assert published("target") == [21]  # unchanged values are not repeated
+
+    calls = {s: async_mock_service(hass, "climate", s) for s in ("set_temperature", "set_hvac_mode")}
+    base = f"{CLIENT_ID}/set/obj/ha/climate/hallway"
+    mqtt.push(f"{base}/target", {"value": 22.5})
+    mqtt.push(f"{base}/mode", {"value": "off"})
+    mqtt.push(f"{base}/current", {"value": 30})  # read only: ignored
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert calls["set_temperature"][0].data == {"entity_id": THERMOSTAT, "temperature": 22.5}
+    assert calls["set_hvac_mode"][0].data == {"entity_id": THERMOSTAT, "hvac_mode": "off"}
+
+
+async def test_thermostat_range_edited_in_iot_open_is_kept(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    lynx: LynxData,
+) -> None:
+    ent_reg = er.async_get(hass)
+    entry = ent_reg.async_get_or_create("climate", "demo", "thermostat-1", suggested_object_id="hallway")
+    ent_reg.async_update_entity(entry.entity_id, labels={_label(hass)})
+    hass.states.async_set(THERMOSTAT, "heat", HEATING)
+    await _setup(hass, config_entry, mock_mqtt)
+
+    def target() -> dict[str, Any]:
+        return next(f for f in lynx.functions[IID] if f["meta"].get("ha.part") == "target" and f["meta"].get("ha.entity_id") == THERMOSTAT)
+
+    assert (target()["meta"]["min"], target()["meta"]["max"]) == ("5", "30")
+    # narrowed in IoT Open, then a sync
+    target()["meta"].update(min="5", max="25", step="1")
+    config_entry.runtime_data.exporter.schedule_reconcile(0)
+    await _later(hass, 3)
+    assert (target()["meta"]["min"], target()["meta"]["max"], target()["meta"]["step"]) == ("5", "25", "1")
+    # deleted in IoT Open: Home Assistant's value comes back
+    del target()["meta"]["max"]
+    config_entry.runtime_data.exporter.schedule_reconcile(0)
+    await _later(hass, 3)
+    assert target()["meta"]["max"] == "30"
+
+
+async def test_start_without_iot_open_mirrors_locally(
+    hass: HomeAssistant,
+    mqtt_mock: MqttMockHAClient,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    lynx: LynxData,
+) -> None:
+    """Local mode survives a restart without internet: the saved export is mirrored over the local broker."""
+    _player(hass, _label(hass))
+    hass.states.async_set(PLAYER, "playing", PLAYING)
+    await _setup(hass, config_entry, mock_mqtt, export_transport="local")  # online: the export is saved
+    assert await hass.config_entries.async_unload(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    # restart without IoT Open
+    export_client.installations.side_effect = IoTOpenConnectionError("no internet")
+    export_client.create_function.reset_mock()
+    mqtt_mock.async_publish.reset_mock()
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert config_entry.state is ConfigEntryState.LOADED
+    hub = config_entry.runtime_data
+    assert hub.offline is True
+    assert hub.diagnostics()["offline"] is True
+    assert {s.part for s in hub.exporter.exported[PLAYER]} == {"playing", "volume", "mute", "state", "power"}
+    export_client.create_function.assert_not_called()  # nothing is created without IoT Open
+
+    # values and commands keep flowing over the local broker
+    topics = [c.args[0] for c in mqtt_mock.async_publish.call_args_list]
+    assert "obj/ha/media_player/living_room/playing" in topics
+    calls = async_mock_service(hass, "media_player", "media_pause")
+    async_fire_mqtt_message(hass, "set/obj/ha/media_player/living_room/playing", '{"value": 0}')
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert len(calls) == 1
+
+    # IoT Open answers again: the integration reloads and starts normally
+    export_client.installations.side_effect = lambda **_: lynx.installation_objects()
+    await _later(hass, 61)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert config_entry.state is ConfigEntryState.LOADED
+    assert config_entry.runtime_data.offline is False
+
+
+@pytest.mark.parametrize("transport", ["cloud", "local"])
+async def test_start_without_iot_open_needs_local_mode_and_a_saved_export(
+    hass: HomeAssistant,
+    mqtt_mock: MqttMockHAClient,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    transport: str,
+) -> None:
+    """Cloud mode, or local mode that never mirrored anything yet, waits for IoT Open as before."""
+    export_client.installations.side_effect = IoTOpenConnectionError("no internet")
+    config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        config_entry, options={**config_entry.options, "export_installation": str(IID), "export_transport": transport}
+    )
+    await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert config_entry.state is ConfigEntryState.SETUP_RETRY
 
 
 async def test_media_player_source(

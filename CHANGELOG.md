@@ -12,6 +12,63 @@ All notable changes to this project are documented here. The format follows
 - Buttons and scenes publish value `1` when pressed or activated, with the time in `msg`, instead of the press
   time as a text value. A restart or reconnect no longer looks like a press.
 
+## 0.7.0
+
+### Local broker without internet
+
+- **Starts without internet.** With *Local broker*, the integration now remembers what it mirrored last. When Home
+  Assistant starts while IoT Open cannot be reached (for example after a power cut), it mirrors those entities over the
+  edge client's broker straight away, so the local dashboard and Home Assistant keep working together. Before, the
+  integration waited for IoT Open and nothing was mirrored. It checks once a minute and reloads itself when IoT Open
+  answers, and then starts as usual (imported functions included).
+- **Configure opens without internet**, with the saved settings and the installations known so far. Before it
+  stopped with *Cannot connect to the IoT Open server*.
+- **The options form keeps what you chose after an error.** For example *Local broker* no longer falls back to
+  *IoT Open (cloud)* when the form says that the MQTT integration is missing.
+- Diagnostics show whether the integration started without IoT Open (`offline`).
+
+## 0.6.1
+
+### Mirroring (Home Assistant → IoT Open)
+
+- `min`, `max` and `step` are only seeded by Home Assistant, like `name` and `unit`. A range changed in IoT Open (for
+  example a thermostat's set point 5-25 °C instead of Home Assistant's 7-35) is kept instead of being written back on
+  the next sync. Delete the key in IoT Open to get Home Assistant's value back. Home Assistant still checks every
+  command against the entity's own limits.
+
+## 0.6.0
+
+### Mirroring (Home Assistant → IoT Open)
+
+- Thermostats (`climate`) are mirrored as up to four functions on the same IoT Open device: the current
+  temperature, the target temperature (`setpoint`, controllable), the HVAC mode (controllable, the available modes in
+  `ha.hvac_modes`) and the HVAC action, on `obj/ha/climate/<object_id>/<part>`. The IoT Open Dashboard shows them as
+  one thermostat widget. A thermostat mirrored by an earlier version (as one function) is replaced
+  by the new functions.
+
+### Examples
+
+- `examples/wall-display`: a Home Assistant dashboard for a wall display such as a Shelly Wall Display X2i, made with
+  Home Assistant's own cards only, and a table of how its entities are mirrored into IoT Open.
+
+## 0.5.0
+
+### Mirroring (Home Assistant → IoT Open)
+
+- New option *Send values and receive commands via* with *Local broker*. Values and commands then go through Home
+  Assistant's MQTT integration and the edge client's broker, whose bridge forwards them to and from IoT Open. The
+  local dashboard and Home Assistant keep working together without internet. The default is unchanged (IoT Open's
+  cloud MQTT). The option needs Home Assistant's MQTT integration, connected to the edge client's broker.
+- When IoT Open answers HTTP 403 (the API key's user may not change devices and functions in the mirror
+  installation), Home Assistant now shows a repair under *Settings → Repairs* that explains which access is missing,
+  instead of only a warning in the log. The repair disappears by itself when mirroring works again, or when
+  mirroring is turned off.
+
+### Other
+
+- The project is now licensed under the MIT License (previously Apache 2.0), as are AutomateIT's other IoT Open
+  projects.
+
 ## 0.4.0
 
 ### Mirroring (Home Assistant → IoT Open)

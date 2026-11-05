@@ -9,11 +9,16 @@
 * Values: every state change is published to ``<client_id>/obj/ha/<domain>/<object_id>``. Media player
   functions only publish when their value or msg changed, and volume is debounced.
 * Control: ``<client_id>/set/obj/ha/...`` calls the matching HA service.
+* Transport: values and commands go over IoT Open's cloud MQTT (default), or with ``local`` over
+  Home Assistant's MQTT integration connected to the edge client's broker. The edge client's bridge
+  carries ``obj/#`` up and ``set/#`` down, so mirroring keeps working on the LAN without internet.
+  Structure (devices/functions) always uses the REST API.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Callable
 from datetime import datetime
@@ -21,12 +26,19 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import CALLBACK_TYPE, Event, EventStateChangedData, HomeAssistant, State, callback
-from homeassistant.helpers import device_registry as dr, entity_registry as er, label_registry as lr
+from homeassistant.helpers import (
+    device_registry as dr,
+    entity_registry as er,
+    issue_registry as ir,
+    label_registry as lr,
+)
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
+from .const import DOMAIN, EXPORT_TRANSPORT_CLOUD, EXPORT_TRANSPORT_LOCAL
 from .export_mapping import (
+    CLIMATE,
     MEDIA_PLAYER,
     META_ENTITY_ID,
     META_HA_DEVICE_ID,
@@ -46,10 +58,11 @@ from .export_mapping import (
     function_specs,
     is_own,
     is_exportable,
-    is_media_active,
-    media_command,
-    media_parts,
-    media_value,
+    entity_parts,
+    has_parts,
+    is_parts_active,
+    part_command,
+    part_value,
     meta_differs,
     press_value,
     topic_suffix,
@@ -60,9 +73,12 @@ from .pyiotopen import (
     Installation,
     IoTOpenAuthError,
     IoTOpenError,
+    IoTOpenForbiddenError,
     StructureEvent,
     ValueUpdate,
+    decode_payload,
     full_topic,
+    parse_message,
     structure_topics,
 )
 
@@ -77,6 +93,28 @@ LABEL_ICON = "iotopen:badge"  # served by frontend/iotopen-icons.js
 LABEL_COLOR = "indigo"  # closest HA palette colour to IoT Open's #0d3e53
 LABEL_DESCRIPTION = "Speglas till IoT Open / Mirrored to IoT Open"
 DEVICE_TYPE = "HomeAssistant"
+ISSUE_EXPORT_FORBIDDEN = "export_forbidden"
+RETRY_DELAY = 60.0
+LOCAL_COMMAND_TOPIC = "set/obj/ha/#"  # bare: the edge client's broker has no client id prefix
+LOCAL_QOS = 1  # the edge client's bridge forwards obj/# and set/# with QoS 1
+CACHE_VERSION = 1
+
+
+def _cache_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
+    """What was mirrored last, so a start without IoT Open can mirror over the local broker."""
+    return Store(hass, CACHE_VERSION, f"{DOMAIN}.export_{entry_id}")
+
+
+async def async_load_cache(hass: HomeAssistant, entry_id: str) -> dict[str, Any] | None:
+    """The saved export (installation and functions), or None."""
+    data = await _cache_store(hass, entry_id).async_load()
+    if not isinstance(data, dict) or not isinstance(data.get("installation"), dict):
+        return None
+    return data
+
+
+async def async_remove_cache(hass: HomeAssistant, entry_id: str) -> None:
+    await _cache_store(hass, entry_id).async_remove()
 
 
 class IoTOpenExporter:
@@ -90,6 +128,7 @@ class IoTOpenExporter:
         label_name: str,
         allow_control: bool,
         include_categorized: bool = False,
+        transport: str = EXPORT_TRANSPORT_CLOUD,
     ) -> None:
         self.hass = hass
         self.hub = hub
@@ -98,6 +137,7 @@ class IoTOpenExporter:
         self.allow_control = allow_control
         # also mirror diagnostic/config entities of labelled devices (a label on the entity always counts)
         self.include_categorized = include_categorized
+        self.transport = transport
         self.exported: dict[str, list[FunctionSpec]] = {}
         self._last_sent: dict[str, tuple[Any, str]] = {}  # topic -> (value, msg) for deduplicated parts
         self._volume_timers: dict[str, CALLBACK_TYPE] = {}
@@ -106,11 +146,26 @@ class IoTOpenExporter:
         self._state_unsub: CALLBACK_TYPE | None = None
         self._unsubs: list[Callable[[], None]] = []
         self._task: asyncio.Task[Any] | None = None
+        self._local_task: asyncio.Task[Any] | None = None
         self.last_error: str | None = None
 
     @property
     def client_id(self) -> int:
         return self.installation.client_id
+
+    @property
+    def local(self) -> bool:
+        """Values and commands go over Home Assistant's MQTT integration (the edge client's broker)."""
+        return self.transport == EXPORT_TRANSPORT_LOCAL
+
+    @property
+    def connected(self) -> bool:
+        """Whether values can be published right now."""
+        if self.local:
+            from homeassistant.components import mqtt  # noqa: PLC0415 - only needed in local mode
+
+            return mqtt.is_connected(self.hass)
+        return bool(self.hub.mqtt.connected)
 
     # ------------------------------------------------------------------ lifecycle
     async def async_start(self) -> None:
@@ -124,12 +179,41 @@ class IoTOpenExporter:
         ):
             self._unsubs.append(bus.async_listen(event_type, self._on_registry_event))
         self._unsubs.append(self.hub.add_message_hook(self._on_broker_message))
-        self._unsubs.append(self.hub.add_connect_listener(self._publish_all))
+        if self.local:
+            self._local_task = self.hub.entry.async_create_background_task(
+                self.hass, self._async_start_local(), "iotopen export local mqtt"
+            )
+        else:
+            self._unsubs.append(self.hub.add_connect_listener(self._publish_all))
         self.hub.extra_topics.update(structure_topics(self.client_id))
         # the first sync talks to IoT Open for every exported entity: never block HA start-up with it
         self._task = self.hub.entry.async_create_background_task(
             self.hass, self.async_reconcile(), "iotopen export initial sync"
         )
+
+    async def _async_start_local(self) -> None:
+        """Listen for commands on the local broker and publish everything on every (re)connect."""
+        from homeassistant.components import mqtt  # noqa: PLC0415 - only needed in local mode
+
+        if not await mqtt.async_wait_for_mqtt_client(self.hass):
+            self.last_error = "mqtt_unavailable"
+            _LOGGER.warning(
+                "IoT Open mirroring is set to the local broker, but Home Assistant's MQTT integration "
+                "is not available: no values are sent until it is"
+            )
+            return
+
+        @callback
+        def _on_connection(connected: bool) -> None:
+            if connected:
+                self._publish_all()
+
+        self._unsubs.append(mqtt.async_subscribe_connection_status(self.hass, _on_connection))
+        self._unsubs.append(
+            await mqtt.async_subscribe(self.hass, LOCAL_COMMAND_TOPIC, self._on_local_message, LOCAL_QOS)
+        )
+        if mqtt.is_connected(self.hass):
+            self._publish_all()
 
     @callback
     def _ensure_label(self) -> None:
@@ -166,6 +250,10 @@ class IoTOpenExporter:
         self._volume_timers.clear()
         if self._task and not self._task.done():
             self._task.cancel()
+        if self._local_task and not self._local_task.done():
+            self._local_task.cancel()  # still waiting for HA's MQTT integration
+        # mirroring stopped (unload, or another installation chosen): an old repair is no longer true
+        self._clear_forbidden_issue()
 
     # ------------------------------------------------------------------ what to export
     def _label_id(self) -> str | None:
@@ -218,13 +306,81 @@ class IoTOpenExporter:
             try:
                 await self._reconcile()
                 self.last_error = None
+                self._clear_forbidden_issue()
+                await self._async_save_cache()
             except IoTOpenAuthError:
                 self.last_error = "auth"
                 self.hub._start_reauth()  # noqa: SLF001
+            except IoTOpenForbiddenError as err:
+                # the key works, but its user may not change devices/functions here: tell the user
+                # in Repairs (a log line is easy to miss) and keep retrying until access is granted
+                self.last_error = str(err)
+                _LOGGER.warning("IoT Open export failed, retrying later: %s", err)
+                self._raise_forbidden_issue()
+                self.schedule_reconcile(RETRY_DELAY)
             except IoTOpenError as err:
                 self.last_error = str(err)
                 _LOGGER.warning("IoT Open export failed, retrying later: %s", err)
-                self.schedule_reconcile(60)
+                self.schedule_reconcile(RETRY_DELAY)
+
+    async def _async_save_cache(self) -> None:
+        """Save what is mirrored now, for a start without IoT Open (local broker only)."""
+        inst = self.installation
+        data = {
+            "installation": {"id": inst.id, "client_id": inst.client_id, "name": inst.name},
+            "exported": {
+                entity_id: [{"type": s.type, "meta": dict(s.meta)} for s in specs]
+                for entity_id, specs in self.exported.items()
+            },
+        }
+        try:
+            await _cache_store(self.hass, self.hub.entry.entry_id).async_save(data)
+        except Exception as err:  # noqa: BLE001 - the cache is a convenience, never a reason to fail
+            _LOGGER.debug("Could not save the IoT Open export cache: %s", err)
+
+    async def async_start_offline(self, cache: dict[str, Any]) -> None:
+        """Start without IoT Open: mirror the saved functions over the local broker.
+
+        Nothing is created or changed in IoT Open (that needs its API): the hub reloads the integration when IoT Open
+        can be reached again, and the normal start takes over.
+        """
+        self._ensure_label()
+        self.exported = {
+            entity_id: [FunctionSpec(entity_id, str(f.get("type", "")), dict(f.get("meta") or {})) for f in fns]
+            for entity_id, fns in (cache.get("exported") or {}).items()
+            if isinstance(fns, list)
+        }
+        self.last_error = "offline"
+        self._track_states()
+        if self.local:
+            self._local_task = self.hub.entry.async_create_background_task(
+                self.hass, self._async_start_local(), "iotopen export local mqtt (offline)"
+            )
+
+    @property
+    def _forbidden_issue_id(self) -> str:
+        return f"{ISSUE_EXPORT_FORBIDDEN}_{self.hub.entry.entry_id}"
+
+    @callback
+    def _raise_forbidden_issue(self) -> None:
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self._forbidden_issue_id,
+            is_fixable=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key=ISSUE_EXPORT_FORBIDDEN,
+            translation_placeholders={
+                "installation": self.installation.name,
+                "installation_id": str(self.installation.id),
+                "url": f"{self.hub.client.base_url}/installations/{self.installation.id}",
+                "retry": str(int(RETRY_DELAY)),
+            },
+        )
+
+    @callback
+    def _clear_forbidden_issue(self) -> None:
+        ir.async_delete_issue(self.hass, DOMAIN, self._forbidden_issue_id)
 
     async def _reconcile(self) -> None:
         client = self.hub.client
@@ -282,9 +438,12 @@ class IoTOpenExporter:
             attrs = dict(state.attributes) if state else {}
             if entry is not None and "device_class" not in attrs and (entry.device_class or entry.original_device_class):
                 attrs["device_class"] = entry.device_class or entry.original_device_class
+            if entity_id.split(".", 1)[0] == CLIMATE:
+                attrs.setdefault("temperature_unit", self.hass.config.units.temperature_unit)
             keep_parts: set[str] = set()
-            if entity_id.split(".", 1)[0] == MEDIA_PLAYER and not is_media_active(state.state if state else None):
-                # off or unavailable players may report fewer features: only add functions, never delete
+            if has_parts(entity_id) and not is_parts_active(entity_id, state.state if state else None):
+                # off or unavailable players (and unavailable thermostats) may report fewer features or
+                # attributes: only add functions, never delete
                 keep_parts = {part for eid, part in own_fns if eid == entity_id and part}
                 if entry is not None and "supported_features" not in attrs:
                     attrs["supported_features"] = entry.supported_features
@@ -323,13 +482,15 @@ class IoTOpenExporter:
         self._track_states()
         self.hub.extra_topics = {
             t for t in self.hub.extra_topics if not t.startswith(f"{self.client_id}/set/obj/ha/")
-        } | {
-            full_topic(self.client_id, t)
-            for specs in exported.values()
-            for s in specs
-            for t in (s.topic_write, s.meta.get("topic_write_onoff"))
-            if t
         }
+        if not self.local:  # locally one wildcard subscription on the edge broker covers all commands
+            self.hub.extra_topics |= {
+                full_topic(self.client_id, t)
+                for specs in exported.values()
+                for s in specs
+                for t in (s.topic_write, s.meta.get("topic_write_onoff"))
+                if t
+            }
         self.hub.extra_topics.update(structure_topics(self.client_id))
         await self.hub.async_update_subscriptions()
         for entity_id in newly:
@@ -370,13 +531,13 @@ class IoTOpenExporter:
         entity_id = event.data["entity_id"]
         new_state = event.data["new_state"]
         if (
-            entity_id.split(".", 1)[0] == MEDIA_PLAYER
+            has_parts(entity_id)
             and new_state is not None
-            and is_media_active(new_state.state)
+            and is_parts_active(entity_id, new_state.state)
             and "supported_features" in new_state.attributes
-            and set(media_parts(dict(new_state.attributes))) != {s.part for s in self.exported.get(entity_id, [])}
+            and set(entity_parts(entity_id, dict(new_state.attributes))) != {s.part for s in self.exported.get(entity_id, [])}
         ):
-            self.schedule_reconcile()  # the player gained or lost features
+            self.schedule_reconcile()  # the player or thermostat gained or lost features
         self._publish(entity_id, new_state)
 
     @callback
@@ -391,18 +552,18 @@ class IoTOpenExporter:
         ``force`` (after a (re)connect or for new functions) skips deduplication and debouncing.
         """
         specs = self.exported.get(entity_id)
-        if not specs or state is None or not self.hub.mqtt.connected:
+        if not specs or state is None or not self.connected:
             return
         timestamp = state.last_updated.timestamp()
         domain = entity_id.split(".", 1)[0]
         attrs = dict(state.attributes)
         for spec in specs:
             if spec.part:
-                converted = media_value(spec.part, state.state, attrs)
+                converted = part_value(entity_id, spec.part, state.state, attrs)
                 if converted is None:
                     continue
                 topic = spec.topic_read
-                if spec.part == PART_VOLUME and not force:
+                if domain == MEDIA_PLAYER and spec.part == PART_VOLUME and not force:
                     self._debounce_volume(topic, converted, timestamp)
                     continue
                 if not force and self._last_sent.get(topic) == converted:
@@ -442,7 +603,7 @@ class IoTOpenExporter:
         @callback
         def _fire(_now: datetime) -> None:
             self._volume_timers.pop(topic, None)
-            if self.hub.mqtt.connected and self._last_sent.get(topic) != converted:
+            if self.connected and self._last_sent.get(topic) != converted:
                 self._send(topic, converted, timestamp)
 
         self._volume_timers[topic] = async_call_later(self.hass, VOLUME_DEBOUNCE, _fire)
@@ -453,15 +614,21 @@ class IoTOpenExporter:
         value, msg = converted
         payload = {"value": value, "timestamp": timestamp, "msg": msg}
         self.hub.entry.async_create_background_task(
-            self.hass,
-            self._async_publish(full_topic(self.client_id, topic), payload),
-            f"iotopen publish {topic}",
+            self.hass, self._async_publish(topic, payload), f"iotopen publish {topic}"
         )
 
     async def _async_publish(self, topic: str, payload: dict[str, Any]) -> None:
+        """Publish a bare ``obj/...`` topic: with the client id prefix in the cloud, as is locally."""
         try:
-            await self.hub.mqtt.publish(topic, payload)
-        except IoTOpenError as err:
+            if self.local:
+                from homeassistant.components import mqtt  # noqa: PLC0415 - only needed in local mode
+
+                await mqtt.async_publish(
+                    self.hass, topic, json.dumps(payload, separators=(",", ":")), qos=LOCAL_QOS
+                )
+            else:
+                await self.hub.mqtt.publish(full_topic(self.client_id, topic), payload)
+        except Exception as err:  # noqa: BLE001 - a lost value must never break the integration
             _LOGGER.debug("Publish to %s failed: %s", topic, err)
 
     # ------------------------------------------------------------------ commands IoT Open -> HA
@@ -474,27 +641,39 @@ class IoTOpenExporter:
             return False  # the import side also wants it
         if not event.topic.startswith("set/obj/ha/"):
             return False
+        if not self.local:  # locally, commands arrive once, from the edge broker
+            self._handle_command(event)
+        return True
+
+    @callback
+    def _on_local_message(self, msg: Any) -> None:
+        """A command on the edge client's broker (from the local dashboard, or bridged from IoT Open)."""
+        event = parse_message(f"{self.client_id}/{msg.topic}", decode_payload(msg.payload))
+        if isinstance(event, ValueUpdate) and event.topic.startswith("set/obj/ha/"):
+            self._handle_command(event)
+
+    @callback
+    def _handle_command(self, event: ValueUpdate) -> None:
         entity_id = entity_for_topic(event.topic)
         suffix = topic_suffix(event.topic)
         part = "" if suffix == ONOFF_SUFFIX else suffix
         spec = next((s for s in self.exported.get(entity_id or "", []) if s.part == part), None)
         if entity_id is None or spec is None or spec.topic_write is None:
-            return True
+            return
         if spec.part:
-            call = media_command(spec.part, event.value)
+            call = part_command(entity_id, spec.part, event.value)
         elif spec.meta.get("topic_read_onoff") and suffix != ONOFF_SUFFIX:
             call = dimmer_command(event.value)  # level 0-100
         else:
             call = command_service(entity_id.split(".", 1)[0], event.value)
         if call is None:
             _LOGGER.warning("IoT Open: unsupported command %r for %s", event.value, entity_id)
-            return True
+            return
         domain, service, data = call
         _LOGGER.debug("IoT Open command: %s.%s %s %s", domain, service, entity_id, data)
         self.hub.entry.async_create_background_task(
             self.hass, self._async_call(domain, service, entity_id, data), f"iotopen command {entity_id}"
         )
-        return True
 
     async def _async_call(self, domain: str, service: str, entity_id: str, data: dict[str, Any]) -> None:
         try:
@@ -508,6 +687,7 @@ class IoTOpenExporter:
             "label": self.label_name,
             "allow_control": self.allow_control,
             "include_categorized": self.include_categorized,
+            "transport": self.transport,
             "exported": {
                 s.key: {"type": s.type, "meta": s.meta} for specs in self.exported.values() for s in specs
             },

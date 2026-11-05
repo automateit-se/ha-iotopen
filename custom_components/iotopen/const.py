@@ -20,6 +20,11 @@ CONF_EXPORT_CONTROL: Final = "export_control"
 # also mirror diagnostic/config entities of labelled devices (off: e.g. a phone's battery sensors stay out)
 CONF_EXPORT_CATEGORIZED: Final = "export_categorized"
 EXPORT_NONE: Final = "none"
+# how mirrored values and commands travel (structure always uses the REST API)
+CONF_EXPORT_TRANSPORT: Final = "export_transport"
+EXPORT_TRANSPORT_CLOUD: Final = "cloud"  # IoT Open's MQTT over WebSocket
+EXPORT_TRANSPORT_LOCAL: Final = "local"  # HA's MQTT integration -> the edge client's broker and bridge
+DEFAULT_EXPORT_TRANSPORT: Final = EXPORT_TRANSPORT_CLOUD
 DEFAULT_EXPORT_LABEL: Final = "IoT Open"
 CONF_INSTANCE_NAME: Final = "instance_name"
 CONF_IMPORT_MODE: Final = "import_mode"
@@ -40,6 +45,8 @@ STRUCTURE_DEBOUNCE: Final = 1.0
 UNAVAILABLE_GRACE: Final = 60.0
 # new installations do not announce themselves on an existing client_id -> rare check
 INSTALLATION_CHECK_INTERVAL: Final = timedelta(hours=1)
+# started without IoT Open (local mirroring only): how often to look whether it is back
+OFFLINE_CHECK_INTERVAL: Final = timedelta(minutes=1)
 
 
 def signal_value(entry_id: str, installation_id: int, topic: str) -> str:
