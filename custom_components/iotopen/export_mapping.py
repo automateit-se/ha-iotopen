@@ -7,16 +7,19 @@ IoT Open conventions:
   ``ha.source_id`` = the stable HA instance id, so the
   import side can ignore them and the export side knows which objects it owns.
 * most entities become one function; a ``media_player`` becomes several (playback, volume, mute, status,
-  power) on topics ``obj/ha/media_player/<object_id>/<part>``, told apart by ``ha.part``; a ``climate``
+  power, source, play) on topics ``obj/ha/media_player/<object_id>/<part>``, told apart by ``ha.part``; a ``climate``
   entity likewise (current temperature, target temperature, HVAC mode, HVAC action) on
   ``obj/ha/climate/<object_id>/<part>``.
+* buttons and scenes publish 1 when pressed/activated, with the time in ``msg``.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 META_SOURCE = "ha.source"  # readable instance name, e.g. "home" (follows renames)
@@ -55,7 +58,9 @@ PART_VOLUME = "volume"
 PART_MUTE = "mute"
 PART_STATE = "state"
 PART_POWER = "power"
-MEDIA_PARTS = (PART_PLAYING, PART_VOLUME, PART_MUTE, PART_STATE, PART_POWER)
+PART_SOURCE = "source"
+PART_PLAY = "play"
+MEDIA_PARTS = (PART_PLAYING, PART_VOLUME, PART_MUTE, PART_STATE, PART_POWER, PART_SOURCE, PART_PLAY)
 CLIMATE = "climate"
 PART_CURRENT = "current"
 PART_TARGET = "target"
@@ -71,23 +76,34 @@ MP_VOLUME_SET = 4
 MP_VOLUME_MUTE = 8
 MP_TURN_ON = 128
 MP_TURN_OFF = 256
+MP_PLAY_MEDIA = 512
+MP_SELECT_SOURCE = 2048
 MP_PLAY = 16384
 _PART_FEATURES = {
     PART_PLAYING: MP_PLAY | MP_PAUSE,
     PART_VOLUME: MP_VOLUME_SET,
     PART_MUTE: MP_VOLUME_MUTE,
     PART_POWER: MP_TURN_ON | MP_TURN_OFF,
+    PART_SOURCE: MP_SELECT_SOURCE,
+    PART_PLAY: MP_PLAY_MEDIA,
 }
 MEDIA_OFF_STATES = {"off", "standby"}
 MSG_MAX = 200  # track text in msg
+META_SOURCE_LIST = "ha.source_list"  # JSON list of a player's inputs, so IoT Open users know what to send
+META_MEDIA_LIST = "ha.media_list"  # JSON list of the sound files the play function can play
+SOURCE_LIST_MAX = 1000
+# a file name sent to the play function is looked up in Home Assistant's media folder ("My media")
+LOCAL_MEDIA = "media-source://media_source/local/"
 
 # function name = "<entity name> <part name>"; IoT Open is master for the name once it is created
 _PART_NAMES = {
     "en": {
-        PART_PLAYING: "Playback", PART_VOLUME: "Volume", PART_MUTE: "Mute", PART_STATE: "Status", PART_POWER: "Power"
+        PART_PLAYING: "Playback", PART_VOLUME: "Volume", PART_MUTE: "Mute", PART_STATE: "Status",
+        PART_POWER: "Power", PART_SOURCE: "Source", PART_PLAY: "Play",
     },
     "sv": {
-        PART_PLAYING: "Uppspelning", PART_VOLUME: "Volym", PART_MUTE: "Mute", PART_STATE: "Status", PART_POWER: "På/av"
+        PART_PLAYING: "Uppspelning", PART_VOLUME: "Volym", PART_MUTE: "Mute", PART_STATE: "Status",
+        PART_POWER: "På/av", PART_SOURCE: "Källa", PART_PLAY: "Spela upp",
     },
 }
 _CLIMATE_NAMES = {
@@ -451,8 +467,17 @@ def _media_spec(
     if part == PART_VOLUME:
         type_ = "dimmer"
         meta.update(min="0", max="100", unit="%")
-    elif part == PART_STATE:
+    elif part in (PART_STATE, PART_PLAY):
         type_ = "text"
+    elif part == PART_SOURCE:
+        type_ = "text"
+        sources = [str(x) for x in attributes.get("source_list") or []]
+        listed = json.dumps(sources, ensure_ascii=False)
+        while sources and len(listed) > SOURCE_LIST_MAX:
+            sources.pop()
+            listed = json.dumps(sources, ensure_ascii=False)
+        if sources:
+            meta[META_SOURCE_LIST] = listed
     else:
         type_ = "switch"
         text_on, text_off = {
@@ -478,9 +503,10 @@ def function_specs(
     iot_device_id: int | None = None,
     language: str | None = None,
     keep_parts: Iterable[str] = (),
+    media_list: str | None = None,
 ) -> list[FunctionSpec]:
     """All IoT Open functions for an entity: one, or several for a media player or a thermostat (see
-    :func:`media_parts`, :func:`climate_parts`)."""
+    :func:`media_parts`, :func:`climate_parts`). ``media_list`` (JSON) goes on a player's play function."""
     if not has_parts(entity_id):
         return [
             function_spec(
@@ -501,10 +527,14 @@ def function_specs(
     if attributes.get("device_class"):
         base[META_DEVICE_CLASS] = str(attributes["device_class"])
     build = _climate_spec if entity_id.split(".", 1)[0] == CLIMATE else _media_spec
-    return [
+    specs = [
         build(entity_id, name, part, attributes, base, allow_control, language)
         for part in entity_parts(entity_id, attributes, keep_parts)
     ]
+    for spec in specs:
+        if spec.part == PART_PLAY and media_list:
+            spec.meta[META_MEDIA_LIST] = media_list
+    return specs
 
 
 def _shorten(text: str, limit: int = MSG_MAX) -> str:
@@ -551,7 +581,35 @@ def media_value(part: str, state: str | None, attributes: dict[str, Any]) -> tup
             return max(0, min(100, round(float(level) * 100))), ""
         except (TypeError, ValueError):
             return None
+    if part == PART_SOURCE:
+        source = str(attributes.get("source") or "").strip()
+        return (_shorten(source, 255), "") if source else None
+    if part == PART_PLAY:
+        # what is playing, as it would be sent (a file in "My media" by its name); empty when nothing is
+        if raw not in ("playing", "paused"):
+            return "", ""
+        playing = str(attributes.get("media_content_id") or attributes.get("media_title") or "").strip()
+        if playing.startswith(LOCAL_MEDIA):
+            playing = playing[len(LOCAL_MEDIA) :]
+        return _shorten(playing, 255), ""
     return None
+
+
+def play_media_id(value: Any) -> str | None:
+    """What to play: a file in Home Assistant's media folder, a ``media-source://`` id or an http(s) URL.
+
+    ``dorrklocka.mp3`` and ``larm/brand.mp3`` are files in "My media". Paths that climb out of the media folder
+    (``..``) are refused.
+    """
+    text = str(value).strip() if value is not None else ""
+    if not text:
+        return None
+    if text.startswith(("media-source://", "http://", "https://")):
+        return text
+    path = text.replace("\\", "/").lstrip("/")
+    if not path or ".." in path.split("/"):
+        return None
+    return LOCAL_MEDIA + path
 
 
 def media_command(part: str, value: Any) -> tuple[str, str, dict[str, Any]] | None:
@@ -562,6 +620,14 @@ def media_command(part: str, value: Any) -> tuple[str, str, dict[str, Any]] | No
         except (TypeError, ValueError):
             return None
         return MEDIA_PLAYER, "volume_set", {"volume_level": max(0.0, min(100.0, level)) / 100}
+    if part == PART_SOURCE:
+        source = str(value).strip() if value is not None else ""
+        return (MEDIA_PLAYER, "select_source", {"source": source}) if source else None
+    if part == PART_PLAY:
+        media_id = play_media_id(value)
+        if media_id is None:
+            return None
+        return MEDIA_PLAYER, "play_media", {"media_content_id": media_id, "media_content_type": "music"}
     on = _truthy(value)
     if on is None:
         return None
@@ -572,6 +638,27 @@ def media_command(part: str, value: Any) -> tuple[str, str, dict[str, Any]] | No
     if part == PART_POWER:
         return MEDIA_PLAYER, "turn_on" if on else "turn_off", {}
     return None
+
+
+# domains whose state is the time of the last press/activation
+PRESS_DOMAINS = {"button", "input_button", "scene"}
+PRESS_RECENT = 30.0  # seconds; an older time is a restored state (e.g. after a restart), not a press
+
+
+def press_value(state: str | None, now: datetime) -> tuple[int, str] | None:
+    """A press as (1, time) when ``state`` (the time of the last press) is recent, else ``None``.
+
+    Home Assistant restores the last press time on start-up; that must not look like a new press.
+    """
+    if state is None or str(state).lower() in UNAVAILABLE_STATES:
+        return None
+    try:
+        pressed = datetime.fromisoformat(str(state))
+    except ValueError:
+        return None
+    if pressed.tzinfo is None or abs((now - pressed).total_seconds()) > PRESS_RECENT:
+        return None
+    return 1, str(state)
 
 
 def export_value(domain: str, state: str | None) -> tuple[Any, str] | None:
@@ -686,6 +773,8 @@ def meta_differs(current: dict[str, str], wanted: dict[str, str]) -> bool:
 def managed_keys_removed(current: dict[str, str], wanted: dict[str, str]) -> list[str]:
     """Keys we used to set but no longer want (e.g. topic_write after control was disabled)."""
     ours = {
+        META_SOURCE_LIST,
+        META_MEDIA_LIST,
         "topic_write", "unit", "device_id", META_DEVICE_CLASS,
         "state_on", "state_off", "text_on", "text_off",
         "state_open", "state_closed", "text_open", "text_closed",

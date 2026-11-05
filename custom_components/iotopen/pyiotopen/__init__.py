@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 from .client import IoTOpenClient, mqtt_url_for, normalize_base_url
-from .const import DEFAULT_BASE_URL, EVT_DEVICEX_UPDATED, EVT_FUNCTIONX_UPDATED, STRUCTURE_EVENTS
+from .const import (
+    DEFAULT_BASE_URL,
+    EVT_DEVICEX_UPDATED,
+    EVT_FILE_UPDATED,
+    EVT_FUNCTIONX_UPDATED,
+    STRUCTURE_EVENTS,
+)
 from .events import LiveEvent, StructureEvent, ValueUpdate, decode_payload, parse_message
 from .exceptions import (
     IoTOpenAuthError,
@@ -14,7 +20,7 @@ from .exceptions import (
     IoTOpenResponseError,
     IoTOpenTwoFactorRequired,
 )
-from .models import AuthResult, Device, Function, Installation, InstallationSnapshot, Status
+from .models import AuthResult, Device, File, Function, Installation, InstallationSnapshot, Status
 from .mqtt import ConnectionState, IoTOpenMqtt
 from .topics import full_topic, normalize_topic, split_topic, structure_topics
 
@@ -23,11 +29,13 @@ __version__ = "0.1.0"
 __all__ = [
     "DEFAULT_BASE_URL",
     "EVT_DEVICEX_UPDATED",
+    "EVT_FILE_UPDATED",
     "EVT_FUNCTIONX_UPDATED",
     "STRUCTURE_EVENTS",
     "AuthResult",
     "ConnectionState",
     "Device",
+    "File",
     "Function",
     "Installation",
     "InstallationSnapshot",

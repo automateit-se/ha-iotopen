@@ -12,6 +12,7 @@ API_KEY_HEADER = "X-API-Key"
 # changed, so the receiver re-reads devicex/functionx for that installation.
 EVT_FUNCTIONX_UPDATED = "evt/functionx/updated"
 EVT_DEVICEX_UPDATED = "evt/devicex/updated"
+EVT_FILE_UPDATED = "evt/file/updated"  # a file was added, changed or deleted on the installation
 STRUCTURE_EVENTS: tuple[str, ...] = (EVT_FUNCTIONX_UPDATED, EVT_DEVICEX_UPDATED)
 
 # Function metadata keys used by IoT Open conventions.

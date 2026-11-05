@@ -5,6 +5,27 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+## 0.8.0
+
+### Mirroring (Home Assistant → IoT Open)
+
+- Media players with input selection get a *Source* function (*Källa* in Swedish): the current input as text, and
+  `select_source` when an input name is sent to it. The inputs are listed in the metadata key `ha.source_list`.
+- Media players that can play media get a *Play* function (*Spela upp* in Swedish). Send a file name from Home
+  Assistant's media folder, for example `{"value": "doorbell.mp3"}`, and the player plays it, so many sounds need
+  neither one script each nor any change in Home Assistant. `media-source://` ids and http(s) URLs also work.
+- *Play* lists the audio files in Home Assistant's media folder in the metadata key `ha.media_list`, so Edge Apps
+  and dashboards know which file names they can send. Files copied from IoT Open show up at once, files
+  uploaded in Home Assistant's media browser within 5 minutes.
+- New option *Copy sound files from IoT Open* (off by default): audio files uploaded to the mirror installation in
+  IoT Open are copied to the media folder's `iotopen` sub-folder and play without internet. The copy runs when
+  IoT Open announces a change (`evt/file/updated`), at start-up and after an outage, so there is no polling. Files
+  deleted in IoT Open are deleted locally; other files in the folder are left alone.
+- `pyiotopen`: `IoTOpenClient.files()` and `download_file()` for IoT Open's file storage, and
+  `evt/file/updated` as `StructureEvent(kind="file")`.
+- Buttons and scenes publish value `1` when pressed or activated, with the time in `msg`, instead of the press
+  time as a text value. A restart or reconnect no longer looks like a press.
+
 ## 0.7.0
 
 ### Local broker without internet

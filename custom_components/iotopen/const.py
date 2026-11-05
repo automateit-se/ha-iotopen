@@ -19,6 +19,8 @@ CONF_EXPORT_LABEL: Final = "export_label"
 CONF_EXPORT_CONTROL: Final = "export_control"
 # also mirror diagnostic/config entities of labelled devices (off: e.g. a phone's battery sensors stay out)
 CONF_EXPORT_CATEGORIZED: Final = "export_categorized"
+# copy the mirror installation's audio files into <media folder>/iotopen (off: nothing is written to disk)
+CONF_SYNC_MEDIA: Final = "sync_media"
 EXPORT_NONE: Final = "none"
 # how mirrored values and commands travel (structure always uses the REST API)
 CONF_EXPORT_TRANSPORT: Final = "export_transport"

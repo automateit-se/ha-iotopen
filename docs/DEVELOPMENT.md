@@ -43,6 +43,8 @@ custom_components/iotopen/
   mapping.py                    pure: function → platform/device class/state class/unit (no HA imports)
   exporter.py    IoTOpenExporter mirrors labelled HA entities/devices into IoT Open
   export_mapping.py             pure: entity → IoT Open function spec, values, commands, ownership
+  media_files.py                pure: media folder scan (ha.media_list), safe file names, sync plan
+  media_sync.py  IoTOpenMediaSync copies the installation's audio files into <media folder>/iotopen
   entity.py, sensor.py, binary_sensor.py, switch.py, light.py
   config_flow.py                config flow, reauth, options, installation subentries
   diagnostics.py, strings.json, translations/{en,sv}.json
@@ -94,13 +96,44 @@ This follows the same pattern as IoT Open's own web dashboards:
   - HA suggests a new type (e.g. the entity got another device class): HA's type and keys are written, and the old
     texts are replaced since they no longer fit;
   - objects from before `ha.type` existed count as changed in IoT Open when the types differ.
-- **One entity can become several functions.** A `media_player` becomes up to five functions on the same IoT Open
-  device (playback, volume, mute, status, power), on `obj/ha/media_player/<object_id>/<part>`. `ha.part` names the
+- **One entity can become several functions.** A `media_player` becomes up to seven functions on the same IoT Open
+  device (playback, volume, mute, status, power, source, play), on `obj/ha/media_player/<object_id>/<part>`. `ha.part` names the
   function, and ownership is decided per (`ha.entity_id`, `ha.part`), so duplicates are still cleaned up per
   function. Only the parts allowed by `supported_features` are created (status always); a part the player no longer
   supports is deleted. An unavailable player takes its features from the entity registry, so its functions are not
   deleted while it is offline. Function names get a Swedish or English suffix from HA's language; IoT Open is master
   for the name as usual. See `function_specs` and `media_*` in `export_mapping.py`.
+- **Play** (`play_media`) is a seventh media function, for players with `PLAY_MEDIA`, so many sound files need
+  no script each. A plain value is a path in HA's local media folder (`media-source://media_source/local/<path>`);
+  `media-source://` ids and http(s) URLs are passed on as they are. `..` path segments are refused, so a command
+  cannot reach files outside the media folder. The function's value is what is playing (the local path when it is a
+  local file), empty when nothing is. See `play_media_id`.
+- **`ha.media_list`** on the play function lists the audio files in HA's local media folder (JSON, at most 2000
+  characters), so Edge Apps and dashboards know what to send without file system access. The exporter rescans the
+  folder at each reconcile and every 5 minutes, and reconciles when the list changed.
+- **Sound files are copied from IoT Open, never pushed.** IoT Open cannot write to the edge device, so the
+  option *Copy sound files from IoT Open* makes HA pull: `IoTOpenMediaSync` lists the mirror installation's
+  `audio/*` files (`GET /api/v2/file/installation/{id}?mime=audio/*`) and downloads new or changed ones by hash
+  (`GET /api/v2/file/download/{hash}`) into `<media folder>/iotopen/`. Each
+  download is checked against its SHA-256 and written atomically (temp file + rename). A manifest in HA's storage
+  (name → hash) records what the sync wrote; only those files are ever deleted, so files put in the folder by hand
+  stay. Names are reduced to a safe base name (no folders, `..` or hidden files); clashes get `-<id>`. Files over
+  50 MB are skipped. The player never needs the folder: HA serves `media-source://media_source/local/...` to it
+  over HTTP. The sync is off by default because it writes to disk. See `plan_sync` in `media_files.py`.
+- **The sync is driven by events, not polling.** IoT Open publishes `<client_id>/evt/file/updated` (empty payload)
+  when a file on the installation is added, changed or deleted (verified on a live installation). The sync
+  subscribes to it, waits 3 s so a batch of uploads gives one round, and runs. It also runs at start-up, on every
+  broker (re)connect, so changes made while the edge was offline are picked up, 5 minutes after a failed round
+  with no connection, and every 6 hours as a safety net. A file event is consumed by the sync: it does not reload
+  the import side or reconcile the mirror. `pyiotopen` reports it as `StructureEvent(kind="file")`.
+- **Source** (`select_source`) is a sixth media function, for players with `SELECT_SOURCE`. Its value is the
+  current input as text; a command sends the input's name. The inputs are listed in `ha.source_list` (JSON, at most
+  1000 characters), which is structural and follows HA at each reconcile.
+- **Buttons and scenes publish presses, not their state.** HA's state for `button`, `input_button` and `scene` is
+  the time of the last press. It used to be published as a text value, which says little in IoT Open. Now a press
+  is published as value 1 with the time in `msg`, and only when the time is within 30 s of now
+  (`press_value`): HA restores the last press time on start-up, and that must not look like a new press. Presses
+  are never re-sent on reconnect.
 - **The track is sent in `msg`.** The playback function sends `msg` = `Artist - Title` (title only without an
   artist, the channel for radio without a title), at most 200 characters. IoT Open logs every message, so a new
   track while playing is sent as a new message with the same value. The text stays on pause and is cleared on

@@ -58,6 +58,7 @@ If the key is revoked or the token expires, Home Assistant starts a re-authentic
 | Label that selects what is mirrored | Default `IoT Open`. The label is created automatically. |
 | Allow IoT Open to control Home Assistant | Mirrored switches, lights, locks, covers, numbers, media players, thermostats, … get a `topic_write`. |
 | Mirror diagnostic and configuration entities of labelled devices | Off by default. See [Mirroring](#mirroring-home-assistant--iot-open). |
+| Copy sound files from IoT Open | Off by default. Copies the mirror installation's audio files to the media folder. See *Sound files from IoT Open* below. |
 | Send values and receive commands via | *IoT Open (cloud)* (default) or *Local broker*. See [Local broker](#local-broker-mirroring-without-internet). |
 | This Home Assistant's name in IoT Open | Instance name used in `ha.source` and `ha.destination`. |
 | Import from IoT Open | *Only tagged* (default): only devices/functions whose `ha.destination` names this instance. *All*: every function in the selected installations. |
@@ -143,7 +144,7 @@ for other binary sensors. Domains without a meaningful value (`event`, `update`,
 
 ### Media players
 
-A media player (for example a Sonos speaker) becomes several functions on the same IoT Open device. The topics start
+A media player (for example a Sonos speaker or an AV receiver) becomes several functions on the same IoT Open device. The topics start
 with `obj/ha/media_player/<object_id>`, and each function carries `ha.part`:
 
 | Function | Type | Topic | Control (`set/…`) |
@@ -153,11 +154,13 @@ with `obj/ha/media_player/<object_id>`, and each function carries `ha.part`:
 | *&lt;name&gt; Mute* | `switch` | `…/mute` | `volume_mute` |
 | *&lt;name&gt; Status* | text, read only (`playing`, `paused`, `idle`, `off`, `unavailable`, …) | `…/state` | - |
 | *&lt;name&gt; Power* | `switch` | `…/power` | `turn_on` / `turn_off` |
+| *&lt;name&gt; Source* | text: the current input | `…/source` | `select_source`: send the input's name, e.g. `{"value": "TV"}` |
+| *&lt;name&gt; Play* | text: what is playing (empty when nothing is) | `…/play` | `play_media`: send a file name, e.g. `{"value": "doorbell.mp3"}` |
 
 - Only the functions the player supports are created; *Status* is always there. If the player loses a feature, the
   function is removed. An unavailable player keeps its functions.
 - The names are in Swedish when Home Assistant's language is Swedish (*Uppspelning*, *Volym*, *Mute*, *Status*,
-  *På/av*). As for other functions, a name changed in IoT Open is kept.
+  *På/av*, *Källa*, *Spela upp*). As for other functions, a name changed in IoT Open is kept.
 - **The track is in `msg`.** *Playback* sends `msg` = `Artist - Title` (only the title when there is no artist, the
   station for radio without a title), shortened to 200 characters. A new track while playing gives a new message
   with the same value, so the IoT Open log shows what was played. On pause the text stays; when the player is idle or
@@ -166,6 +169,40 @@ with `obj/ha/media_player/<object_id>`, and each function carries `ha.part`:
   published about 1 s after the last change, so dragging a slider gives one value.
 - The state follows Home Assistant: a command from IoT Open is confirmed when the player reports the new state.
 - `topic_write` is only set when *Allow IoT Open to control Home Assistant* is on.
+- *Source* carries the player's inputs in the metadata key `ha.source_list` (a JSON list, e.g. `["TV", "CD"]`), so
+  you can see what to send. It is updated when the mirror syncs (start-up, label or registry changes).
+
+**Playing sound files.** *Play* is created for players that support `play_media` (for example *VLC media player
+via Telnet* or *MPD*). Put the sound files in Home Assistant's media folder (*Media → My media*, the `/media` folder
+of a Home Assistant container) and send the file name, with sub-folders if you use them (`larm/brand.mp3`), to
+`set/…/play`. One function covers any number of files, so an Edge App can pick the sound at run time. A
+`media-source://` id (for example text-to-speech) or an `http(s)://` URL also works. Paths that climb out of the
+media folder (`..`) are ignored. Set the volume first with *Volume* if needed.
+
+**Which files there are.** *Play* carries the audio files in the media folder (MP3, WAV, OGG, FLAC, M4A …) in the
+metadata key `ha.media_list`, a JSON list such as `["iotopen/doorbell.mp3", "larm/brand.mp3"]`, so an Edge App or a
+dashboard can offer them without access to the file system. The folder is read again every 5 minutes, so files
+uploaded in *Media → My media* show up without a restart. The list is cut at 2000 characters.
+
+**Sound files from IoT Open.** With *Copy sound files from IoT Open* on, the integration copies the audio files
+(`audio/*`) stored on the mirror installation in IoT Open (its file storage, `/api/v2/file/installation/…`) to the
+`iotopen` sub-folder of the media folder. Upload `doorbell.mp3` to the
+installation in IoT Open, and a little later `{"value": "iotopen/doorbell.mp3"}` on *Play* plays it. IoT Open never
+writes to the device: Home Assistant fetches the files, checks each one against its SHA-256 checksum and writes it
+to its own media folder, so the player only needs Home Assistant (it streams the file from it). Copied files keep
+playing without internet. A file deleted in IoT Open is deleted here; files you put in the `iotopen` folder
+yourself are left alone. File names are cleaned up (no folders, no `..`), and files larger than 50 MB are skipped.
+The API key's user needs read access to the installation's files.
+
+The copy runs at start-up, when IoT Open announces a change (it publishes `<client_id>/evt/file/updated` when a
+file is added, changed or deleted), when the connection to IoT Open comes back after an outage, and every 6 hours in
+case an event was missed. There is no polling in between, so an uploaded file is usually in place within seconds.
+
+### Buttons and scenes
+
+A button (`button`, `input_button`) or scene publishes value `1` when it is pressed or activated, with the time of
+the press in `msg`. Home Assistant keeps the time of the last press as the state, so a restart, a reconnect or a
+restored state does not count as a press. Send any true value (`1`, `"on"`, `true`) to `set/…` to press it.
 
 ### Thermostats
 

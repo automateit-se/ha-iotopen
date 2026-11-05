@@ -383,3 +383,67 @@ def test_range_edited_in_iot_open_is_kept():
     # the topics still follow HA
     _, wanted, _ = desired_update({**edited, "topic_write": "set/obj/other"}, "setpoint", spec)
     assert wanted["topic_write"] == "set/obj/ha/climate/cellar/target"
+
+
+def test_media_player_source():
+    from custom_components.iotopen.export_mapping import media_command, media_value
+
+    attrs = {"supported_features": 2048, "source": "TV", "source_list": ["TV", "CD", "Tuner"]}
+    specs = _specs(attrs, language="sv")
+    assert list(specs) == ["state", "source"]
+    source = specs["source"]
+    assert source.type == "text" and source.meta["name"] == "Living Room Källa"
+    assert source.meta["topic_write"] == "set/obj/ha/media_player/living_room/source"
+    assert source.meta["ha.source_list"] == '["TV", "CD", "Tuner"]'
+    assert "ha.source_list" not in _specs({"supported_features": 2048})["source"].meta
+    many = _specs({"supported_features": 2048, "source_list": [f"Input {i:03}" for i in range(200)]})
+    assert len(many["source"].meta["ha.source_list"]) <= 1000
+    assert media_value("source", "on", attrs) == ("TV", "")
+    assert media_value("source", "off", {}) is None
+    assert media_command("source", "CD") == ("media_player", "select_source", {"source": "CD"})
+    assert media_command("source", " ") is None
+
+
+def test_press_value():
+    from datetime import UTC, datetime, timedelta
+
+    from custom_components.iotopen.export_mapping import press_value
+
+    now = datetime(2026, 10, 14, 17, 46, 20, tzinfo=UTC)
+    pressed = (now - timedelta(seconds=5)).isoformat()
+    assert press_value(pressed, now) == (1, pressed)
+    assert press_value((now - timedelta(hours=3)).isoformat(), now) is None  # restored after a restart
+    assert press_value("unknown", now) is None
+    assert press_value("2026-10-14T17:46:15", now) is None  # no time zone: not HA's press format
+    assert press_value("pressed", now) is None
+
+
+def test_media_player_play():
+    from custom_components.iotopen.export_mapping import media_command, media_value, play_media_id
+
+    specs = _specs({"supported_features": 512}, language="sv")
+    assert list(specs) == ["state", "play"]
+    play = specs["play"]
+    assert play.type == "text" and play.meta["name"] == "Living Room Spela upp"
+    assert play.meta["topic_write"] == "set/obj/ha/media_player/living_room/play"
+    assert "topic_write" not in _specs({"supported_features": 512}, allow_control=False)["play"].meta
+
+    local = "media-source://media_source/local/"
+    assert play_media_id("dorrklocka.mp3") == local + "dorrklocka.mp3"
+    assert play_media_id(" /larm/brand alarm.mp3 ") == local + "larm/brand alarm.mp3"
+    assert play_media_id("media-source://tts/cloud?message=Hej") == "media-source://tts/cloud?message=Hej"
+    assert play_media_id("https://radio.example/stream.mp3") == "https://radio.example/stream.mp3"
+    assert play_media_id("../secrets.yaml") is None
+    assert play_media_id("larm/../../x.mp3") is None
+    assert play_media_id("") is None and play_media_id(None) is None
+    assert media_command("play", "dorrklocka.mp3") == (
+        "media_player",
+        "play_media",
+        {"media_content_id": local + "dorrklocka.mp3", "media_content_type": "music"},
+    )
+    assert media_command("play", "..") is None
+
+    assert media_value("play", "playing", {"media_content_id": local + "larm/brand.mp3"}) == ("larm/brand.mp3", "")
+    assert media_value("play", "paused", {"media_title": "Doorbell"}) == ("Doorbell", "")
+    assert media_value("play", "idle", {"media_content_id": local + "x.mp3"}) == ("", "")
+    assert media_value("play", "unavailable", {}) is None

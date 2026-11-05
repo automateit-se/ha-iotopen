@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import timedelta
 from typing import Any
@@ -17,7 +18,13 @@ from pytest_homeassistant_custom_component.common import (
 from pytest_homeassistant_custom_component.typing import MqttMockHAClient
 
 from custom_components.iotopen.const import DOMAIN
-from custom_components.iotopen.pyiotopen import Device, Function, IoTOpenConnectionError, IoTOpenForbiddenError
+from custom_components.iotopen.pyiotopen import (
+    Device,
+    File,
+    Function,
+    IoTOpenConnectionError,
+    IoTOpenForbiddenError,
+)
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
@@ -610,3 +617,214 @@ async def test_start_without_iot_open_needs_local_mode_and_a_saved_export(
     await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done()
     assert config_entry.state is ConfigEntryState.SETUP_RETRY
+
+
+async def test_media_player_source(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    lynx: LynxData,
+) -> None:
+    _player(hass, _label(hass), FEATURES | 2048)
+    hass.states.async_set(
+        PLAYER,
+        "on",
+        {**PLAYING, "supported_features": FEATURES | 2048, "source": "TV", "source_list": ["TV", "CD"]},
+    )
+    mqtt = await _setup(hass, config_entry, mock_mqtt)
+    source = _own_functions(lynx)["source"]
+    assert source["meta"]["ha.source_list"] == '["TV", "CD"]'
+    assert _published(mqtt, "source")[-1]["value"] == "TV"
+
+    calls = async_mock_service(hass, "media_player", "select_source")
+    mqtt.push(f"{CLIENT_ID}/set/obj/ha/media_player/living_room/source", {"value": "CD"})
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert calls[0].data == {"entity_id": PLAYER, "source": "CD"}
+
+
+async def test_button_press_is_sent_once(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+) -> None:
+    label_id = _label(hass)
+    ent_reg = er.async_get(hass)
+    entry = ent_reg.async_get_or_create("button", "yamaha", "scene-tv", suggested_object_id="tv_viewing")
+    ent_reg.async_update_entity(entry.entity_id, labels={label_id})
+    # restored state after a restart: the time of an old press
+    hass.states.async_set("button.tv_viewing", (dt_util.utcnow() - timedelta(hours=2)).isoformat())
+    mqtt = await _setup(hass, config_entry, mock_mqtt)
+    topic = f"{CLIENT_ID}/obj/ha/button/tv_viewing"
+    assert not [p for t, p in mqtt.published if t == topic]
+
+    pressed = dt_util.utcnow().isoformat()
+    hass.states.async_set("button.tv_viewing", pressed)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    sent = [p for t, p in mqtt.published if t == topic]
+    assert [(p["value"], p["msg"]) for p in sent] == [(1, pressed)]
+
+    mqtt.reconnect()  # a reconnect republishes states, but not presses
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert len([p for t, p in mqtt.published if t == topic]) == 1
+
+
+async def test_media_player_play_file(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    lynx: LynxData,
+) -> None:
+    _player(hass, _label(hass), FEATURES | 512)
+    hass.states.async_set(PLAYER, "idle", {**PLAYING, "supported_features": FEATURES | 512})
+    mqtt = await _setup(hass, config_entry, mock_mqtt)
+    assert "play" in _own_functions(lynx)
+    assert _published(mqtt, "play")[-1]["value"] == ""
+
+    calls = async_mock_service(hass, "media_player", "play_media")
+    topic = f"{CLIENT_ID}/set/obj/ha/media_player/living_room/play"
+    mqtt.push(topic, {"value": "larm/brand.mp3"})
+    mqtt.push(topic, {"value": "../configuration.yaml"})  # outside the media folder: ignored
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert [c.data for c in calls] == [
+        {
+            "entity_id": PLAYER,
+            "media_content_id": "media-source://media_source/local/larm/brand.mp3",
+            "media_content_type": "music",
+        }
+    ]
+
+    # the player confirms: the play function shows what is playing
+    hass.states.async_set(
+        PLAYER,
+        "playing",
+        {
+            **PLAYING,
+            "supported_features": FEATURES | 512,
+            "media_content_id": "media-source://media_source/local/larm/brand.mp3",
+        },
+    )
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert _published(mqtt, "play")[-1]["value"] == "larm/brand.mp3"
+
+
+async def test_sound_files_are_copied_and_listed(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    lynx: LynxData,
+    tmp_path,
+) -> None:
+    """Audio files on the installation are copied to <media>/iotopen and listed on the play function."""
+    media = tmp_path / "media"
+    (media / "own").mkdir(parents=True)
+    (media / "own" / "beep.wav").write_bytes(b"RIFF")
+    hass.config.media_dirs = {"local": str(media)}
+    stored: dict[str, tuple[str, bytes]] = {}  # name -> (mime, content)
+
+    def add(name: str, content: bytes, mime: str = "audio/mpeg") -> None:
+        stored[name] = (mime, content)
+
+    def files(iid: int, mime: str | None = None) -> list[File]:
+        assert iid == IID and mime == "audio/*"
+        return [
+            File(id=i, name=n, hash=hashlib.sha256(c).hexdigest(), mime=m, installation_id=IID)
+            for i, (n, (m, c)) in enumerate(stored.items(), start=1)
+        ]
+
+    def download(file_hash: str, max_bytes: int | None = None) -> bytes:
+        return next(c for _, c in stored.values() if hashlib.sha256(c).hexdigest() == file_hash)
+
+    export_client.files = AsyncMock(side_effect=files)
+    export_client.download_file = AsyncMock(side_effect=download)
+    add("Dörrklocka.mp3", b"ID3 bell")
+    add("../../outside.mp3", b"ID3 sneaky")
+
+    _player(hass, _label(hass), FEATURES | 512)
+    hass.states.async_set(PLAYER, "idle", {**PLAYING, "supported_features": FEATURES | 512})
+    mqtt = await _setup(hass, config_entry, mock_mqtt, sync_media=True)
+    await _later(hass, 3)  # the sync schedules a reconcile for the new files
+    assert f"{CLIENT_ID}/evt/file/updated" in mqtt.subscriptions
+    rounds = config_entry.runtime_data.media_sync.rounds
+
+    assert (media / "iotopen" / "Dörrklocka.mp3").read_bytes() == b"ID3 bell"
+    assert (media / "iotopen" / "outside.mp3").read_bytes() == b"ID3 sneaky"  # name only, inside the folder
+    assert not (tmp_path / "outside.mp3").exists()
+    listed = json.loads(_own_functions(lynx)["play"]["meta"]["ha.media_list"])
+    assert listed == ["iotopen/Dörrklocka.mp3", "iotopen/outside.mp3", "own/beep.wav"]
+
+    # no polling: nothing happens until IoT Open announces a change
+    await _later(hass, 1800)
+    assert config_entry.runtime_data.media_sync.rounds == rounds
+
+    # deleted in IoT Open (which sends evt/file/updated): deleted here; a file someone else put there stays
+    del stored["../../outside.mp3"]
+    (media / "iotopen" / "mine.mp3").write_bytes(b"ID3 mine")
+    snapshots = export_client.snapshot.await_count
+    mqtt.push(f"{CLIENT_ID}/evt/file/updated", {})
+    await _later(hass, 1805)  # debounce, then the reconcile for ha.media_list
+    await _later(hass, 1810)
+    assert config_entry.runtime_data.media_sync.rounds == rounds + 1
+    assert export_client.snapshot.await_count == snapshots  # a file event does not reload the installation
+    assert not (media / "iotopen" / "outside.mp3").exists()
+    assert (media / "iotopen" / "mine.mp3").exists()
+    listed = json.loads(_own_functions(lynx)["play"]["meta"]["ha.media_list"])
+    assert listed == ["iotopen/Dörrklocka.mp3", "iotopen/mine.mp3", "own/beep.wav"]
+
+
+async def test_sound_file_with_wrong_checksum_is_not_saved(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    tmp_path,
+) -> None:
+    hass.config.media_dirs = {"local": str(tmp_path)}
+    export_client.files = AsyncMock(
+        return_value=[File(id=1, name="bell.mp3", hash="0" * 64, mime="audio/mpeg", installation_id=IID)]
+    )
+    export_client.download_file = AsyncMock(return_value=b"something else")
+    await _setup(hass, config_entry, mock_mqtt, sync_media=True)
+    assert export_client.download_file.await_count == 1
+    assert not (tmp_path / "iotopen" / "bell.mp3").exists()
+
+
+async def test_sound_files_are_not_copied_by_default(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    tmp_path,
+) -> None:
+    hass.config.media_dirs = {"local": str(tmp_path)}
+    export_client.files = AsyncMock(return_value=[])
+    await _setup(hass, config_entry, mock_mqtt)
+    export_client.files.assert_not_called()
+    assert not (tmp_path / "iotopen").exists()
+
+
+async def test_sound_files_sync_again_after_reconnect(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    tmp_path,
+) -> None:
+    """Edge was offline: when the broker connection is back, files changed meanwhile are fetched."""
+    hass.config.media_dirs = {"local": str(tmp_path)}
+    export_client.files = AsyncMock(return_value=[])
+    mqtt = await _setup(hass, config_entry, mock_mqtt, sync_media=True)
+    await _later(hass, 5)
+    calls = export_client.files.await_count
+    content = b"ID3 new"
+    export_client.files.return_value = [
+        File(id=1, name="new.mp3", hash=hashlib.sha256(content).hexdigest(), mime="audio/mpeg", installation_id=IID)
+    ]
+    export_client.download_file = AsyncMock(return_value=content)
+    mqtt.reconnect()
+    await _later(hass, 10)
+    assert export_client.files.await_count == calls + 1
+    assert (tmp_path / "iotopen" / "new.mp3").read_bytes() == content

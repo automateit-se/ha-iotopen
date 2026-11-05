@@ -56,6 +56,7 @@ from .pyiotopen import (
 from .const import (
     CONF_ADD_NEW_INSTALLATIONS,
     CONF_EXPORT_CATEGORIZED,
+    CONF_SYNC_MEDIA,
     CONF_EXPORT_TRANSPORT,
     CONF_EXPORT_CONTROL,
     CONF_IMPORT_MODE,
@@ -134,6 +135,7 @@ class IoTOpenHub:
         self._connect_listeners: list[Callable[[], None]] = []
         self.extra_topics: set[str] = set()
         self.exporter: Any = None  # IoTOpenExporter when mirroring is enabled
+        self.media_sync: Any = None  # IoTOpenMediaSync when "sync_media" is on
         self.offline = False  # started without IoT Open: local mirroring only, reload when it is back
 
     # ------------------------------------------------------------------ lifecycle
@@ -147,6 +149,7 @@ class IoTOpenHub:
             self.entry.options.get(CONF_EXPORT_LABEL, DEFAULT_EXPORT_LABEL),
             bool(self.entry.options.get(CONF_EXPORT_CONTROL, True)),
             bool(self.entry.options.get(CONF_EXPORT_CATEGORIZED, False)),
+            bool(self.entry.options.get(CONF_SYNC_MEDIA, False)),
             self.export_transport,
             self.instance_name,
             self.import_mode,
@@ -387,6 +390,24 @@ class IoTOpenHub:
             await self.exporter.async_start()
         except Exception:  # never let mirroring problems break the import side
             _LOGGER.exception("Could not start mirroring to IoT Open installation %s", iid)
+        if self.entry.options.get(CONF_SYNC_MEDIA):
+            await self._async_start_media_sync(iid)
+
+    async def _async_start_media_sync(self, installation_id: int) -> None:
+        """Copy the installation's audio files into HA's media folder. Never raises."""
+        from .media_sync import IoTOpenMediaSync  # noqa: PLC0415 - avoid import cycle
+
+        @callback
+        def _changed() -> None:
+            if self.exporter is not None:
+                self.exporter.schedule_reconcile()  # new files belong in ha.media_list
+
+        client_id = self.available_installations[installation_id].client_id
+        self.media_sync = IoTOpenMediaSync(self.hass, self, installation_id, client_id, _changed)
+        try:
+            await self.media_sync.async_start()
+        except Exception:  # never let the file copy break the integration
+            _LOGGER.exception("Could not start copying sound files from IoT Open installation %s", installation_id)
 
     async def _async_on_stop(self, _event: Event) -> None:
         self._stop_unsub = None  # already fired, must not be removed again
@@ -394,6 +415,9 @@ class IoTOpenHub:
 
     async def async_unload(self) -> None:
         """Stop everything."""
+        if self.media_sync is not None:
+            await self.media_sync.async_stop()
+            self.media_sync = None
         if self.exporter is not None:
             await self.exporter.async_stop()
             self.exporter = None
@@ -646,7 +670,8 @@ class IoTOpenHub:
         if iid is None:
             return
         if isinstance(event, StructureEvent):
-            self._schedule_reload(iid)
+            if event.kind != "file":  # a stored file does not change devices or functions
+                self._schedule_reload(iid)
             return
         assert isinstance(event, ValueUpdate)
         snap = self.snapshots[iid]
@@ -895,6 +920,7 @@ class IoTOpenHub:
             },
             "offline": self.offline,
             "export": self.exporter.diagnostics() if self.exporter else None,
+            "media_sync": self.media_sync.diagnostics() if self.media_sync else None,
             "mqtt": {
                 "state": self.mqtt.state,
                 "connect_count": self.mqtt.connect_count,
