@@ -21,7 +21,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import ATTR_ENTITY_ID
@@ -32,11 +32,16 @@ from homeassistant.helpers import (
     issue_registry as ir,
     label_registry as lr,
 )
-from homeassistant.helpers.event import async_call_later, async_track_state_change_event
+from homeassistant.helpers.event import (
+    async_call_later,
+    async_track_state_change_event,
+    async_track_time_interval,
+)
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, EXPORT_TRANSPORT_CLOUD, EXPORT_TRANSPORT_LOCAL
+from .media_files import media_list_meta, scan_media
 from .export_mapping import (
     CLIMATE,
     MEDIA_PLAYER,
@@ -89,6 +94,7 @@ _LOGGER = logging.getLogger(__name__)
 
 RECONCILE_DEBOUNCE = 2.0
 VOLUME_DEBOUNCE = 1.0  # a dragged volume slider publishes only its last value
+MEDIA_SCAN_INTERVAL = timedelta(minutes=5)  # files added in HA's media browser show up in ha.media_list
 LABEL_ICON = "iotopen:badge"  # served by frontend/iotopen-icons.js
 LABEL_COLOR = "indigo"  # closest HA palette colour to IoT Open's #0d3e53
 LABEL_DESCRIPTION = "Speglas till IoT Open / Mirrored to IoT Open"
@@ -148,6 +154,8 @@ class IoTOpenExporter:
         self._task: asyncio.Task[Any] | None = None
         self._local_task: asyncio.Task[Any] | None = None
         self.last_error: str | None = None
+        self._media_files: list[str] = []  # audio files in HA's media folder, for ha.media_list
+        self._media_list: str | None = None
 
     @property
     def client_id(self) -> int:
@@ -185,6 +193,7 @@ class IoTOpenExporter:
             )
         else:
             self._unsubs.append(self.hub.add_connect_listener(self._publish_all))
+        self._unsubs.append(async_track_time_interval(self.hass, self._on_media_scan, MEDIA_SCAN_INTERVAL))
         self.hub.extra_topics.update(structure_topics(self.client_id))
         # the first sync talks to IoT Open for every exported entity: never block HA start-up with it
         self._task = self.hub.entry.async_create_background_task(
@@ -382,7 +391,29 @@ class IoTOpenExporter:
     def _clear_forbidden_issue(self) -> None:
         ir.async_delete_issue(self.hass, DOMAIN, self._forbidden_issue_id)
 
+    # ------------------------------------------------------------------ sound files (ha.media_list)
+    async def async_refresh_media(self) -> bool:
+        """Re-read the audio files in HA's media folder; True when the list changed."""
+        root = self.hass.config.media_dirs.get("local")
+        files = await self.hass.async_add_executor_job(scan_media, root) if root else []
+        if files == self._media_files:
+            return False
+        self._media_files = files
+        self._media_list = media_list_meta(files)
+        return True
+
+    @callback
+    def _on_media_scan(self, _now: datetime) -> None:
+        async def _scan() -> None:
+            if await self.async_refresh_media() and any(
+                s.part for specs in self.exported.values() for s in specs
+            ):
+                self.schedule_reconcile()
+
+        self.hub.entry.async_create_background_task(self.hass, _scan(), "iotopen media scan")
+
     async def _reconcile(self) -> None:
+        await self.async_refresh_media()
         client = self.hub.client
         iid = self.installation.id
         source_id = self.hub.source_id or ""
@@ -457,6 +488,7 @@ class IoTOpenExporter:
                 iot_device_id=device_map.get(entry.device_id) if entry and entry.device_id else None,
                 language=self.hass.config.language,
                 keep_parts=keep_parts,
+                media_list=self._media_list,
             )
             for spec in specs:
                 await self._sync_function(own_fns.pop((entity_id, spec.part), []), spec)
@@ -687,6 +719,7 @@ class IoTOpenExporter:
             "label": self.label_name,
             "allow_control": self.allow_control,
             "include_categorized": self.include_categorized,
+            "media_files": len(self._media_files),
             "transport": self.transport,
             "exported": {
                 s.key: {"type": s.type, "meta": s.meta} for specs in self.exported.values() for s in specs

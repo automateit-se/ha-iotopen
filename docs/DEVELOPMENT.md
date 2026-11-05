@@ -43,6 +43,8 @@ custom_components/iotopen/
   mapping.py                    pure: function → platform/device class/state class/unit (no HA imports)
   exporter.py    IoTOpenExporter mirrors labelled HA entities/devices into IoT Open
   export_mapping.py             pure: entity → IoT Open function spec, values, commands, ownership
+  media_files.py                pure: media folder scan (ha.media_list), safe file names, sync plan
+  media_sync.py  IoTOpenMediaSync copies the installation's audio files into <media folder>/iotopen
   entity.py, sensor.py, binary_sensor.py, switch.py, light.py
   config_flow.py                config flow, reauth, options, installation subentries
   diagnostics.py, strings.json, translations/{en,sv}.json
@@ -106,6 +108,18 @@ This follows the same pattern as IoT Open's own web dashboards:
   `media-source://` ids and http(s) URLs are passed on as they are. `..` path segments are refused, so a command
   cannot reach files outside the media folder. The function's value is what is playing (the local path when it is a
   local file), empty when nothing is. See `play_media_id`.
+- **`ha.media_list`** on the play function lists the audio files in HA's local media folder (JSON, at most 2000
+  characters), so Edge Apps and dashboards know what to send without file system access. The exporter rescans the
+  folder at each reconcile and every 5 minutes, and reconciles when the list changed.
+- **Sound files are copied from IoT Open, never pushed.** IoT Open cannot write to the edge device, so the
+  option *Copy sound files from IoT Open* makes HA pull: `IoTOpenMediaSync` lists the mirror installation's
+  `audio/*` files (`GET /api/v2/file/installation/{id}?mime=audio/*`) and downloads new or changed ones by hash
+  (`GET /api/v2/file/download/{hash}`) into `<media folder>/iotopen/`, at start-up and every 10 minutes. Each
+  download is checked against its SHA-256 and written atomically (temp file + rename). A manifest in HA's storage
+  (name → hash) records what the sync wrote; only those files are ever deleted, so files put in the folder by hand
+  stay. Names are reduced to a safe base name (no folders, `..` or hidden files); clashes get `-<id>`. Files over
+  50 MB are skipped. The player never needs the folder: HA serves `media-source://media_source/local/...` to it
+  over HTTP. The sync is off by default because it writes to disk. See `plan_sync` in `media_files.py`.
 - **Source** (`select_source`) is a sixth media function, for players with `SELECT_SOURCE`. Its value is the
   current input as text; a command sends the input's name. The inputs are listed in `ha.source_list` (JSON, at most
   1000 characters), which is structural and follows HA at each reconcile.

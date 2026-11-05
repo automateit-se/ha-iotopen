@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import fnmatch
+import hashlib
 import json
 from dataclasses import dataclass, field
 from typing import Any
@@ -129,6 +131,7 @@ class FakeLynx:
         self.published: list[tuple[str, dict[str, Any]]] = []
         self.requests: list[tuple[str, str]] = []
         self.subscribed = asyncio.Event()
+        self.file_content: dict[str, bytes] = {}  # sha256 -> content
         self.app = web.Application()
         r = self.app.router
         r.add_post("/api/v2/auth", self.auth_post)
@@ -139,6 +142,8 @@ class FakeLynx:
         r.add_get("/api/v2/functionx/{iid}", self.functions)
         r.add_put("/api/v2/functionx/{iid}/{fid}/meta/{key}", self.function_meta)
         r.add_get("/api/v2/status/{iid}", self.status)
+        r.add_get("/api/v2/file/installation/{iid}", self.files)
+        r.add_get("/api/v2/file/download/{hash}", self.download)
         r.add_get("/api/v3beta/log/{iid}", self.log)
         r.add_get("/mqtt", self.mqtt)
 
@@ -194,6 +199,31 @@ class FakeLynx:
                 fn["meta"][key] = body["value"]
                 return web.json_response(fn)
         raise web.HTTPNotFound()
+
+    def add_file(self, iid: int, name: str, content: bytes, mime: str = "audio/mpeg") -> dict[str, Any]:
+        """Store a file on an installation (test helper)."""
+        digest = hashlib.sha256(content).hexdigest()
+        self.file_content[digest] = content
+        files = self.data.setdefault("files", {}).setdefault(iid, [])
+        entry = {"id": 500 + len(files), "hash": digest, "name": name, "mime": mime,
+                 "installation_id": iid, "organization_id": 0, "updated": 1, "created": 1}
+        files.append(entry)
+        return entry
+
+    async def files(self, request: web.Request) -> web.Response:
+        self._check(request)
+        entries = self.data.get("files", {}).get(int(request.match_info["iid"]), [])
+        mime = request.query.get("mime")
+        if mime:
+            entries = [e for e in entries if fnmatch.fnmatch(e["mime"], mime)]
+        return web.json_response(entries)
+
+    async def download(self, request: web.Request) -> web.Response:
+        self._check(request)
+        content = self.file_content.get(request.match_info["hash"])
+        if content is None:
+            raise web.HTTPNotFound(text='{"message":"not found"}', content_type="application/json")
+        return web.Response(body=content, content_type="application/octet-stream")
 
     async def status(self, request: web.Request) -> web.Response:
         self._check(request)

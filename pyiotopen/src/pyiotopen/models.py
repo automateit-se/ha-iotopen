@@ -293,6 +293,30 @@ class Status:
 
 
 @dataclass(slots=True)
+class File:
+    """A file stored in IoT Open (``/api/v2/file/installation/{installation_id}``)."""
+
+    id: int
+    name: str
+    hash: str
+    mime: str = ""
+    installation_id: int | None = None
+    updated: int | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> File:
+        """Build from an API response entry."""
+        return cls(
+            id=int(data["id"]),
+            name=str(data.get("name") or ""),
+            hash=str(data.get("hash") or ""),
+            mime=str(data.get("mime") or ""),
+            installation_id=_int_or_none(data.get("installation_id")),
+            updated=_int_or_none(data.get("updated")),
+        )
+
+
+@dataclass(slots=True)
 class InstallationSnapshot:
     """Everything needed to represent one installation: structure plus latest values."""
 

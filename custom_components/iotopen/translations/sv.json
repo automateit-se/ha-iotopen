@@ -84,6 +84,7 @@
           "export_label": "Etikett som väljer vad som speglas",
           "export_control": "Låt IoT Open styra Home Assistant",
           "export_categorized": "Spegla diagnostik- och konfigurationsentiteter på märkta enheter",
+          "sync_media": "Kopiera ljudfiler från IoT Open",
           "export_transport": "Skicka värden och ta emot kommandon via",
           "instance_name": "Den här Home Assistants namn i IoT Open",
           "import_mode": "Import från IoT Open"
@@ -94,6 +95,7 @@
           "export_label": "Sätt den här etiketten på entiteter eller enheter i Home Assistant. Etiketten skapas automatiskt.",
           "export_control": "Brytare, lampor, lås, rullgardiner, nummer, mediaspelare m.m. får topic_write (set/obj/…) som anropar Home Assistant-tjänsten.",
           "export_categorized": "Av: en märkt enhet speglar bara sina huvudentiteter, så t.ex. en mobils batteri- och nätverkssensorer eller en högtalares inställningar hamnar inte i IoT Open. En etikett direkt på en entitet speglas alltid.",
+          "sync_media": "Ljudfiler (MP3, WAV …) som finns på speglingsinstallationen i IoT Open kopieras till Home Assistants mediamapp, undermappen iotopen, och hålls i takt var tionde minut. En mediaspelares Spela upp-funktion kan sedan spela t.ex. iotopen/dorrklocka.mp3, även utan internet. Av: inget skrivs.",
           "export_transport": "IoT Open (moln): över internet, kräver inget mer. Lokal broker: via Home Assistants MQTT-integration, som ska vara ansluten till edge-klientens broker i speglingsinstallationen (t.ex. en IoT Open Raspberry Pi). Edge-klientens brygga skickar värdena vidare till IoT Open, och den lokala dashboarden och Home Assistant fortsätter prata med varandra utan internet. Enheter och funktioner skapas fortfarande över internet.",
           "instance_name": "Ange värdet i metanyckeln ha.destination på de devices eller funktioner i IoT Open som ska visas här (det långa instans-id:t {instance_id} fungerar också; * betyder alla instanser).",
           "import_mode": "Bara märkta: endast devices/funktioner vars ha.destination anger den här instansen. Alla: varje funktion i valda installationer."

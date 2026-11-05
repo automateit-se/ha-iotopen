@@ -14,7 +14,7 @@ from .exceptions import (
     IoTOpenResponseError,
     IoTOpenTwoFactorRequired,
 )
-from .models import AuthResult, Device, Function, Installation, InstallationSnapshot, Status
+from .models import AuthResult, Device, File, Function, Installation, InstallationSnapshot, Status
 from .mqtt import ConnectionState, IoTOpenMqtt
 from .topics import full_topic, normalize_topic, split_topic, structure_topics
 
@@ -28,6 +28,7 @@ __all__ = [
     "AuthResult",
     "ConnectionState",
     "Device",
+    "File",
     "Function",
     "Installation",
     "InstallationSnapshot",

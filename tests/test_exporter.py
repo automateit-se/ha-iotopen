@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import timedelta
 from typing import Any
@@ -17,7 +18,13 @@ from pytest_homeassistant_custom_component.common import (
 from pytest_homeassistant_custom_component.typing import MqttMockHAClient
 
 from custom_components.iotopen.const import DOMAIN
-from custom_components.iotopen.pyiotopen import Device, Function, IoTOpenConnectionError, IoTOpenForbiddenError
+from custom_components.iotopen.pyiotopen import (
+    Device,
+    File,
+    Function,
+    IoTOpenConnectionError,
+    IoTOpenForbiddenError,
+)
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
@@ -701,3 +708,89 @@ async def test_media_player_play_file(
     )
     await hass.async_block_till_done(wait_background_tasks=True)
     assert _published(mqtt, "play")[-1]["value"] == "larm/brand.mp3"
+
+
+async def test_sound_files_are_copied_and_listed(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    lynx: LynxData,
+    tmp_path,
+) -> None:
+    """Audio files on the installation are copied to <media>/iotopen and listed on the play function."""
+    media = tmp_path / "media"
+    (media / "own").mkdir(parents=True)
+    (media / "own" / "beep.wav").write_bytes(b"RIFF")
+    hass.config.media_dirs = {"local": str(media)}
+    stored: dict[str, tuple[str, bytes]] = {}  # name -> (mime, content)
+
+    def add(name: str, content: bytes, mime: str = "audio/mpeg") -> None:
+        stored[name] = (mime, content)
+
+    def files(iid: int, mime: str | None = None) -> list[File]:
+        assert iid == IID and mime == "audio/*"
+        return [
+            File(id=i, name=n, hash=hashlib.sha256(c).hexdigest(), mime=m, installation_id=IID)
+            for i, (n, (m, c)) in enumerate(stored.items(), start=1)
+        ]
+
+    def download(file_hash: str, max_bytes: int | None = None) -> bytes:
+        return next(c for _, c in stored.values() if hashlib.sha256(c).hexdigest() == file_hash)
+
+    export_client.files = AsyncMock(side_effect=files)
+    export_client.download_file = AsyncMock(side_effect=download)
+    add("Dörrklocka.mp3", b"ID3 bell")
+    add("../../outside.mp3", b"ID3 sneaky")
+
+    _player(hass, _label(hass), FEATURES | 512)
+    hass.states.async_set(PLAYER, "idle", {**PLAYING, "supported_features": FEATURES | 512})
+    await _setup(hass, config_entry, mock_mqtt, sync_media=True)
+    await _later(hass, 3)  # the sync schedules a reconcile for the new files
+
+    assert (media / "iotopen" / "Dörrklocka.mp3").read_bytes() == b"ID3 bell"
+    assert (media / "iotopen" / "outside.mp3").read_bytes() == b"ID3 sneaky"  # name only, inside the folder
+    assert not (tmp_path / "outside.mp3").exists()
+    listed = json.loads(_own_functions(lynx)["play"]["meta"]["ha.media_list"])
+    assert listed == ["iotopen/Dörrklocka.mp3", "iotopen/outside.mp3", "own/beep.wav"]
+
+    # deleted in IoT Open: deleted here; a file someone else put in the folder stays
+    del stored["../../outside.mp3"]
+    (media / "iotopen" / "mine.mp3").write_bytes(b"ID3 mine")
+    await _later(hass, 601)
+    await _later(hass, 610)
+    assert not (media / "iotopen" / "outside.mp3").exists()
+    assert (media / "iotopen" / "mine.mp3").exists()
+    listed = json.loads(_own_functions(lynx)["play"]["meta"]["ha.media_list"])
+    assert listed == ["iotopen/Dörrklocka.mp3", "iotopen/mine.mp3", "own/beep.wav"]
+
+
+async def test_sound_file_with_wrong_checksum_is_not_saved(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    tmp_path,
+) -> None:
+    hass.config.media_dirs = {"local": str(tmp_path)}
+    export_client.files = AsyncMock(
+        return_value=[File(id=1, name="bell.mp3", hash="0" * 64, mime="audio/mpeg", installation_id=IID)]
+    )
+    export_client.download_file = AsyncMock(return_value=b"something else")
+    await _setup(hass, config_entry, mock_mqtt, sync_media=True)
+    assert export_client.download_file.await_count == 1
+    assert not (tmp_path / "iotopen" / "bell.mp3").exists()
+
+
+async def test_sound_files_are_not_copied_by_default(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    tmp_path,
+) -> None:
+    hass.config.media_dirs = {"local": str(tmp_path)}
+    export_client.files = AsyncMock(return_value=[])
+    await _setup(hass, config_entry, mock_mqtt)
+    export_client.files.assert_not_called()
+    assert not (tmp_path / "iotopen").exists()

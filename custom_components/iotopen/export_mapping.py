@@ -90,6 +90,7 @@ _PART_FEATURES = {
 MEDIA_OFF_STATES = {"off", "standby"}
 MSG_MAX = 200  # track text in msg
 META_SOURCE_LIST = "ha.source_list"  # JSON list of a player's inputs, so IoT Open users know what to send
+META_MEDIA_LIST = "ha.media_list"  # JSON list of the sound files the play function can play
 SOURCE_LIST_MAX = 1000
 # a file name sent to the play function is looked up in Home Assistant's media folder ("My media")
 LOCAL_MEDIA = "media-source://media_source/local/"
@@ -502,9 +503,10 @@ def function_specs(
     iot_device_id: int | None = None,
     language: str | None = None,
     keep_parts: Iterable[str] = (),
+    media_list: str | None = None,
 ) -> list[FunctionSpec]:
     """All IoT Open functions for an entity: one, or several for a media player or a thermostat (see
-    :func:`media_parts`, :func:`climate_parts`)."""
+    :func:`media_parts`, :func:`climate_parts`). ``media_list`` (JSON) goes on a player's play function."""
     if not has_parts(entity_id):
         return [
             function_spec(
@@ -525,10 +527,14 @@ def function_specs(
     if attributes.get("device_class"):
         base[META_DEVICE_CLASS] = str(attributes["device_class"])
     build = _climate_spec if entity_id.split(".", 1)[0] == CLIMATE else _media_spec
-    return [
+    specs = [
         build(entity_id, name, part, attributes, base, allow_control, language)
         for part in entity_parts(entity_id, attributes, keep_parts)
     ]
+    for spec in specs:
+        if spec.part == PART_PLAY and media_list:
+            spec.meta[META_MEDIA_LIST] = media_list
+    return specs
 
 
 def _shorten(text: str, limit: int = MSG_MAX) -> str:
@@ -768,6 +774,7 @@ def managed_keys_removed(current: dict[str, str], wanted: dict[str, str]) -> lis
     """Keys we used to set but no longer want (e.g. topic_write after control was disabled)."""
     ours = {
         META_SOURCE_LIST,
+        META_MEDIA_LIST,
         "topic_write", "unit", "device_id", META_DEVICE_CLASS,
         "state_on", "state_off", "text_on", "text_off",
         "state_open", "state_closed", "text_open", "text_closed",

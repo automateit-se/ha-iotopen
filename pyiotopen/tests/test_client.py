@@ -9,6 +9,8 @@ from pyiotopen import (
     IoTOpenAuthError,
     IoTOpenClient,
     IoTOpenConnectionError,
+    IoTOpenNotFoundError,
+    IoTOpenResponseError,
     IoTOpenTwoFactorRequired,
 )
 
@@ -83,3 +85,19 @@ async def test_connection_error():
         client = IoTOpenClient(session, "http://127.0.0.1:9", "x", request_timeout=2)
         with pytest.raises(IoTOpenConnectionError):
             await client.installations()
+
+
+async def test_files_and_download(client: IoTOpenClient, lynx):
+    sound = lynx.add_file(1001, "doorbell.mp3", b"ID3 fake mp3")
+    lynx.add_file(1001, "layout.json", b"{}", mime="application/json")
+
+    audio = await client.files(1001, mime="audio/*")
+    assert [(f.name, f.hash, f.mime) for f in audio] == [("doorbell.mp3", sound["hash"], "audio/mpeg")]
+    assert len(await client.files(1001)) == 2
+    assert lynx.requests[0][1] == "/api/v2/file/installation/1001?mime=audio/*"
+
+    assert await client.download_file(sound["hash"]) == b"ID3 fake mp3"
+    with pytest.raises(IoTOpenResponseError):
+        await client.download_file(sound["hash"], max_bytes=4)
+    with pytest.raises(IoTOpenNotFoundError):
+        await client.download_file("0" * 64)

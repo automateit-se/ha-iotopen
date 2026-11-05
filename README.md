@@ -58,6 +58,7 @@ If the key is revoked or the token expires, Home Assistant starts a re-authentic
 | Label that selects what is mirrored | Default `IoT Open`. The label is created automatically. |
 | Allow IoT Open to control Home Assistant | Mirrored switches, lights, locks, covers, numbers, media players, thermostats, … get a `topic_write`. |
 | Mirror diagnostic and configuration entities of labelled devices | Off by default. See [Mirroring](#mirroring-home-assistant--iot-open). |
+| Copy sound files from IoT Open | Off by default. Copies the mirror installation's audio files to the media folder. See *Sound files from IoT Open* below. |
 | Send values and receive commands via | *IoT Open (cloud)* (default) or *Local broker*. See [Local broker](#local-broker-mirroring-without-internet). |
 | This Home Assistant's name in IoT Open | Instance name used in `ha.source` and `ha.destination`. |
 | Import from IoT Open | *Only tagged* (default): only devices/functions whose `ha.destination` names this instance. *All*: every function in the selected installations. |
@@ -177,6 +178,21 @@ of a Home Assistant container) and send the file name, with sub-folders if you u
 `set/…/play`. One function covers any number of files, so an Edge App can pick the sound at run time. A
 `media-source://` id (for example text-to-speech) or an `http(s)://` URL also works. Paths that climb out of the
 media folder (`..`) are ignored. Set the volume first with *Volume* if needed.
+
+**Which files there are.** *Play* carries the audio files in the media folder (MP3, WAV, OGG, FLAC, M4A …) in the
+metadata key `ha.media_list`, a JSON list such as `["iotopen/doorbell.mp3", "larm/brand.mp3"]`, so an Edge App or a
+dashboard can offer them without access to the file system. The folder is read again every 5 minutes, so files
+uploaded in *Media → My media* show up without a restart. The list is cut at 2000 characters.
+
+**Sound files from IoT Open.** With *Copy sound files from IoT Open* on, the integration copies the audio files
+(`audio/*`) stored on the mirror installation in IoT Open (its file storage, `/api/v2/file/installation/…`) to the
+`iotopen` sub-folder of the media folder, at start-up and every 10 minutes. Upload `doorbell.mp3` to the
+installation in IoT Open, and a little later `{"value": "iotopen/doorbell.mp3"}` on *Play* plays it. IoT Open never
+writes to the device: Home Assistant fetches the files, checks each one against its SHA-256 checksum and writes it
+to its own media folder, so the player only needs Home Assistant (it streams the file from it). Copied files keep
+playing without internet. A file deleted in IoT Open is deleted here; files you put in the `iotopen` folder
+yourself are left alone. File names are cleaned up (no folders, no `..`), and files larger than 50 MB are skipped.
+The API key's user needs read access to the installation's files.
 
 ### Buttons and scenes
 

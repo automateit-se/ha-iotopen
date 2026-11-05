@@ -21,7 +21,7 @@ from .exceptions import (
     IoTOpenResponseError,
     IoTOpenTwoFactorRequired,
 )
-from .models import AuthResult, Device, Function, Installation, InstallationSnapshot, Status
+from .models import AuthResult, Device, File, Function, Installation, InstallationSnapshot, Status
 from .topics import normalize_topic
 
 _LOGGER = logging.getLogger(__name__)
@@ -383,6 +383,49 @@ class IoTOpenClient:
             {**e, "topic": normalize_topic(e.get("topic"))} for e in entries if isinstance(e, dict)
         ]
         return data
+
+    # ------------------------------------------------------------------ files
+    async def files(self, installation_id: int, *, mime: str | None = None) -> list[File]:
+        """Files stored on an installation; ``mime`` filters with wildcards, e.g. ``audio/*``."""
+        params = {"mime": mime} if mime else None
+        data = await self.request("GET", f"/api/v2/file/installation/{installation_id}", params=params)
+        return [File.from_dict(f) for f in (data or []) if isinstance(f, dict) and "id" in f]
+
+    async def download_file(self, file_hash: str, *, max_bytes: int | None = None) -> bytes:
+        """The content of a stored file (``/api/v2/file/download/{hash}``).
+
+        ``max_bytes`` stops the download (``IoTOpenResponseError``) when the file is larger.
+        """
+        hdrs: dict[str, str] = {"Accept": "*/*"}
+        if self._api_key:
+            hdrs[API_KEY_HEADER] = self._api_key
+        url = f"{self._base_url}/api/v2/file/download/{quote(file_hash, safe='')}"
+        try:
+            async with asyncio.timeout(max(self._timeout, 120)):
+                async with self._session.get(url, headers=hdrs) as resp:
+                    if resp.status >= 400:
+                        text = await resp.text()
+                        message = text[:200] or f"GET file {file_hash} failed"
+                        if resp.status == 401:
+                            raise IoTOpenAuthError(message)
+                        if resp.status == 403:
+                            raise IoTOpenForbiddenError(resp.status, message, None)
+                        if resp.status == 404:
+                            raise IoTOpenNotFoundError(resp.status, message, None)
+                        raise IoTOpenResponseError(resp.status, message, None)
+                    chunks: list[bytes] = []
+                    size = 0
+                    async for chunk in resp.content.iter_chunked(64 * 1024):
+                        size += len(chunk)
+                        if max_bytes is not None and size > max_bytes:
+                            message = f"File {file_hash} is larger than {max_bytes} bytes"
+                            raise IoTOpenResponseError(413, message, None)
+                        chunks.append(chunk)
+                    return b"".join(chunks)
+        except TimeoutError as err:
+            raise IoTOpenConnectionError(f"Timeout downloading from {self._base_url}") from err
+        except aiohttp.ClientError as err:
+            raise IoTOpenConnectionError(f"Error downloading from {self._base_url}: {err}") from err
 
     # ------------------------------------------------------------------ convenience
     async def snapshot(self, installation: Installation) -> InstallationSnapshot:
