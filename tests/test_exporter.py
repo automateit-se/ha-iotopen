@@ -745,8 +745,10 @@ async def test_sound_files_are_copied_and_listed(
 
     _player(hass, _label(hass), FEATURES | 512)
     hass.states.async_set(PLAYER, "idle", {**PLAYING, "supported_features": FEATURES | 512})
-    await _setup(hass, config_entry, mock_mqtt, sync_media=True)
+    mqtt = await _setup(hass, config_entry, mock_mqtt, sync_media=True)
     await _later(hass, 3)  # the sync schedules a reconcile for the new files
+    assert f"{CLIENT_ID}/evt/file/updated" in mqtt.subscriptions
+    rounds = config_entry.runtime_data.media_sync.rounds
 
     assert (media / "iotopen" / "Dörrklocka.mp3").read_bytes() == b"ID3 bell"
     assert (media / "iotopen" / "outside.mp3").read_bytes() == b"ID3 sneaky"  # name only, inside the folder
@@ -754,11 +756,19 @@ async def test_sound_files_are_copied_and_listed(
     listed = json.loads(_own_functions(lynx)["play"]["meta"]["ha.media_list"])
     assert listed == ["iotopen/Dörrklocka.mp3", "iotopen/outside.mp3", "own/beep.wav"]
 
-    # deleted in IoT Open: deleted here; a file someone else put in the folder stays
+    # no polling: nothing happens until IoT Open announces a change
+    await _later(hass, 1800)
+    assert config_entry.runtime_data.media_sync.rounds == rounds
+
+    # deleted in IoT Open (which sends evt/file/updated): deleted here; a file someone else put there stays
     del stored["../../outside.mp3"]
     (media / "iotopen" / "mine.mp3").write_bytes(b"ID3 mine")
-    await _later(hass, 601)
-    await _later(hass, 610)
+    snapshots = export_client.snapshot.await_count
+    mqtt.push(f"{CLIENT_ID}/evt/file/updated", {})
+    await _later(hass, 1805)  # debounce, then the reconcile for ha.media_list
+    await _later(hass, 1810)
+    assert config_entry.runtime_data.media_sync.rounds == rounds + 1
+    assert export_client.snapshot.await_count == snapshots  # a file event does not reload the installation
     assert not (media / "iotopen" / "outside.mp3").exists()
     assert (media / "iotopen" / "mine.mp3").exists()
     listed = json.loads(_own_functions(lynx)["play"]["meta"]["ha.media_list"])
@@ -794,3 +804,27 @@ async def test_sound_files_are_not_copied_by_default(
     await _setup(hass, config_entry, mock_mqtt)
     export_client.files.assert_not_called()
     assert not (tmp_path / "iotopen").exists()
+
+
+async def test_sound_files_sync_again_after_reconnect(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    tmp_path,
+) -> None:
+    """Edge was offline: when the broker connection is back, files changed meanwhile are fetched."""
+    hass.config.media_dirs = {"local": str(tmp_path)}
+    export_client.files = AsyncMock(return_value=[])
+    mqtt = await _setup(hass, config_entry, mock_mqtt, sync_media=True)
+    await _later(hass, 5)
+    calls = export_client.files.await_count
+    content = b"ID3 new"
+    export_client.files.return_value = [
+        File(id=1, name="new.mp3", hash=hashlib.sha256(content).hexdigest(), mime="audio/mpeg", installation_id=IID)
+    ]
+    export_client.download_file = AsyncMock(return_value=content)
+    mqtt.reconnect()
+    await _later(hass, 10)
+    assert export_client.files.await_count == calls + 1
+    assert (tmp_path / "iotopen" / "new.mp3").read_bytes() == content

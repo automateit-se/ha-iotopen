@@ -106,6 +106,7 @@ def test_snapshot_merge():
 def test_parse_message():
     assert parse_message("2001/evt/functionx/updated", {}) == StructureEvent(2001, "functionx")
     assert parse_message("2001/evt/devicex/updated", {}) == StructureEvent(2001, "devicex")
+    assert parse_message("2001/evt/file/updated", {}) == StructureEvent(2001, "file")
     assert parse_message("2001/evt/other", {}) is None
     assert parse_message("nope", {}) is None
     upd = parse_message("2001/obj/a", {"value": 3, "timestamp": 10, "msg": "hi"})

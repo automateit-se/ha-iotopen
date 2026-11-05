@@ -669,6 +669,8 @@ class IoTOpenExporter:
         if client_id != self.client_id:
             return False
         if isinstance(event, StructureEvent):
+            if event.kind == "file":
+                return False  # stored files are the media sync's business
             self.schedule_reconcile(5)  # someone may have edited/deleted our objects
             return False  # the import side also wants it
         if not event.topic.startswith("set/obj/ha/"):

@@ -186,13 +186,17 @@ uploaded in *Media → My media* show up without a restart. The list is cut at 2
 
 **Sound files from IoT Open.** With *Copy sound files from IoT Open* on, the integration copies the audio files
 (`audio/*`) stored on the mirror installation in IoT Open (its file storage, `/api/v2/file/installation/…`) to the
-`iotopen` sub-folder of the media folder, at start-up and every 10 minutes. Upload `doorbell.mp3` to the
+`iotopen` sub-folder of the media folder. Upload `doorbell.mp3` to the
 installation in IoT Open, and a little later `{"value": "iotopen/doorbell.mp3"}` on *Play* plays it. IoT Open never
 writes to the device: Home Assistant fetches the files, checks each one against its SHA-256 checksum and writes it
 to its own media folder, so the player only needs Home Assistant (it streams the file from it). Copied files keep
 playing without internet. A file deleted in IoT Open is deleted here; files you put in the `iotopen` folder
 yourself are left alone. File names are cleaned up (no folders, no `..`), and files larger than 50 MB are skipped.
 The API key's user needs read access to the installation's files.
+
+The copy runs at start-up, when IoT Open announces a change (it publishes `<client_id>/evt/file/updated` when a
+file is added, changed or deleted), when the connection to IoT Open comes back after an outage, and every 6 hours in
+case an event was missed. There is no polling in between, so an uploaded file is usually in place within seconds.
 
 ### Buttons and scenes
 

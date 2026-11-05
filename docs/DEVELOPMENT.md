@@ -114,12 +114,18 @@ This follows the same pattern as IoT Open's own web dashboards:
 - **Sound files are copied from IoT Open, never pushed.** IoT Open cannot write to the edge device, so the
   option *Copy sound files from IoT Open* makes HA pull: `IoTOpenMediaSync` lists the mirror installation's
   `audio/*` files (`GET /api/v2/file/installation/{id}?mime=audio/*`) and downloads new or changed ones by hash
-  (`GET /api/v2/file/download/{hash}`) into `<media folder>/iotopen/`, at start-up and every 10 minutes. Each
+  (`GET /api/v2/file/download/{hash}`) into `<media folder>/iotopen/`. Each
   download is checked against its SHA-256 and written atomically (temp file + rename). A manifest in HA's storage
   (name → hash) records what the sync wrote; only those files are ever deleted, so files put in the folder by hand
   stay. Names are reduced to a safe base name (no folders, `..` or hidden files); clashes get `-<id>`. Files over
   50 MB are skipped. The player never needs the folder: HA serves `media-source://media_source/local/...` to it
   over HTTP. The sync is off by default because it writes to disk. See `plan_sync` in `media_files.py`.
+- **The sync is driven by events, not polling.** IoT Open publishes `<client_id>/evt/file/updated` (empty payload)
+  when a file on the installation is added, changed or deleted (verified on a live installation). The sync
+  subscribes to it, waits 3 s so a batch of uploads gives one round, and runs. It also runs at start-up, on every
+  broker (re)connect, so changes made while the edge was offline are picked up, 5 minutes after a failed round
+  with no connection, and every 6 hours as a safety net. A file event is consumed by the sync: it does not reload
+  the import side or reconcile the mirror. `pyiotopen` reports it as `StructureEvent(kind="file")`.
 - **Source** (`select_source`) is a sixth media function, for players with `SELECT_SOURCE`. Its value is the
   current input as text; a command sends the input's name. The inputs are listed in `ha.source_list` (JSON, at most
   1000 characters), which is structural and follows HA at each reconcile.

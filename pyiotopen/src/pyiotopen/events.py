@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from .const import EVT_DEVICEX_UPDATED, EVT_FUNCTIONX_UPDATED
+from .const import EVT_DEVICEX_UPDATED, EVT_FILE_UPDATED, EVT_FUNCTIONX_UPDATED
 from .topics import split_topic
 
 
@@ -24,7 +24,8 @@ class ValueUpdate:
 
 @dataclass(slots=True, frozen=True)
 class StructureEvent:
-    """Devices (``kind == "devicex"``) or functions (``"functionx"``) changed in an installation."""
+    """Devices (``kind == "devicex"``), functions (``"functionx"``) or stored files (``"file"``) changed in an
+    installation."""
 
     client_id: int
     kind: str
@@ -65,6 +66,8 @@ def parse_message(topic: str, payload: dict[str, Any]) -> LiveEvent | None:
         return StructureEvent(client_id, "functionx")
     if bare == EVT_DEVICEX_UPDATED:
         return StructureEvent(client_id, "devicex")
+    if bare == EVT_FILE_UPDATED:
+        return StructureEvent(client_id, "file")
     if bare.startswith("evt/"):
         return None
     try:

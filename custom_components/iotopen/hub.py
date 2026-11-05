@@ -402,7 +402,8 @@ class IoTOpenHub:
             if self.exporter is not None:
                 self.exporter.schedule_reconcile()  # new files belong in ha.media_list
 
-        self.media_sync = IoTOpenMediaSync(self.hass, self, installation_id, _changed)
+        client_id = self.available_installations[installation_id].client_id
+        self.media_sync = IoTOpenMediaSync(self.hass, self, installation_id, client_id, _changed)
         try:
             await self.media_sync.async_start()
         except Exception:  # never let the file copy break the integration
@@ -669,7 +670,8 @@ class IoTOpenHub:
         if iid is None:
             return
         if isinstance(event, StructureEvent):
-            self._schedule_reload(iid)
+            if event.kind != "file":  # a stored file does not change devices or functions
+                self._schedule_reload(iid)
             return
         assert isinstance(event, ValueUpdate)
         snap = self.snapshots[iid]
