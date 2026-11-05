@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+## 0.8.0
+
 ### Mirroring (Home Assistant → IoT Open)
 
 - Media players with input selection get a *Source* function (*Källa* in Swedish): the current input as text, and
