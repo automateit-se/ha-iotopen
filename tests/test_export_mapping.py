@@ -416,3 +416,34 @@ def test_press_value():
     assert press_value("unknown", now) is None
     assert press_value("2026-10-14T17:46:15", now) is None  # no time zone: not HA's press format
     assert press_value("pressed", now) is None
+
+
+def test_media_player_play():
+    from custom_components.iotopen.export_mapping import media_command, media_value, play_media_id
+
+    specs = _specs({"supported_features": 512}, language="sv")
+    assert list(specs) == ["state", "play"]
+    play = specs["play"]
+    assert play.type == "text" and play.meta["name"] == "Living Room Spela upp"
+    assert play.meta["topic_write"] == "set/obj/ha/media_player/living_room/play"
+    assert "topic_write" not in _specs({"supported_features": 512}, allow_control=False)["play"].meta
+
+    local = "media-source://media_source/local/"
+    assert play_media_id("dorrklocka.mp3") == local + "dorrklocka.mp3"
+    assert play_media_id(" /larm/brand alarm.mp3 ") == local + "larm/brand alarm.mp3"
+    assert play_media_id("media-source://tts/cloud?message=Hej") == "media-source://tts/cloud?message=Hej"
+    assert play_media_id("https://radio.example/stream.mp3") == "https://radio.example/stream.mp3"
+    assert play_media_id("../secrets.yaml") is None
+    assert play_media_id("larm/../../x.mp3") is None
+    assert play_media_id("") is None and play_media_id(None) is None
+    assert media_command("play", "dorrklocka.mp3") == (
+        "media_player",
+        "play_media",
+        {"media_content_id": local + "dorrklocka.mp3", "media_content_type": "music"},
+    )
+    assert media_command("play", "..") is None
+
+    assert media_value("play", "playing", {"media_content_id": local + "larm/brand.mp3"}) == ("larm/brand.mp3", "")
+    assert media_value("play", "paused", {"media_title": "Doorbell"}) == ("Doorbell", "")
+    assert media_value("play", "idle", {"media_content_id": local + "x.mp3"}) == ("", "")
+    assert media_value("play", "unavailable", {}) is None

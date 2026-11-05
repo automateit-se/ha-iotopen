@@ -94,13 +94,18 @@ This follows the same pattern as IoT Open's own web dashboards:
   - HA suggests a new type (e.g. the entity got another device class): HA's type and keys are written, and the old
     texts are replaced since they no longer fit;
   - objects from before `ha.type` existed count as changed in IoT Open when the types differ.
-- **One entity can become several functions.** A `media_player` becomes up to five functions on the same IoT Open
-  device (playback, volume, mute, status, power), on `obj/ha/media_player/<object_id>/<part>`. `ha.part` names the
+- **One entity can become several functions.** A `media_player` becomes up to seven functions on the same IoT Open
+  device (playback, volume, mute, status, power, source, play), on `obj/ha/media_player/<object_id>/<part>`. `ha.part` names the
   function, and ownership is decided per (`ha.entity_id`, `ha.part`), so duplicates are still cleaned up per
   function. Only the parts allowed by `supported_features` are created (status always); a part the player no longer
   supports is deleted. An unavailable player takes its features from the entity registry, so its functions are not
   deleted while it is offline. Function names get a Swedish or English suffix from HA's language; IoT Open is master
   for the name as usual. See `function_specs` and `media_*` in `export_mapping.py`.
+- **Play** (`play_media`) is a seventh media function, for players with `PLAY_MEDIA`, so many sound files need
+  no script each. A plain value is a path in HA's local media folder (`media-source://media_source/local/<path>`);
+  `media-source://` ids and http(s) URLs are passed on as they are. `..` path segments are refused, so a command
+  cannot reach files outside the media folder. The function's value is what is playing (the local path when it is a
+  local file), empty when nothing is. See `play_media_id`.
 - **Source** (`select_source`) is a sixth media function, for players with `SELECT_SOURCE`. Its value is the
   current input as text; a command sends the input's name. The inputs are listed in `ha.source_list` (JSON, at most
   1000 characters), which is structural and follows HA at each reconcile.

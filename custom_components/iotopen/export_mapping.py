@@ -7,7 +7,7 @@ IoT Open conventions:
   ``ha.source_id`` = the stable HA instance id, so the
   import side can ignore them and the export side knows which objects it owns.
 * most entities become one function; a ``media_player`` becomes several (playback, volume, mute, status,
-  power, source) on topics ``obj/ha/media_player/<object_id>/<part>``, told apart by ``ha.part``; a ``climate``
+  power, source, play) on topics ``obj/ha/media_player/<object_id>/<part>``, told apart by ``ha.part``; a ``climate``
   entity likewise (current temperature, target temperature, HVAC mode, HVAC action) on
   ``obj/ha/climate/<object_id>/<part>``.
 * buttons and scenes publish 1 when pressed/activated, with the time in ``msg``.
@@ -59,7 +59,8 @@ PART_MUTE = "mute"
 PART_STATE = "state"
 PART_POWER = "power"
 PART_SOURCE = "source"
-MEDIA_PARTS = (PART_PLAYING, PART_VOLUME, PART_MUTE, PART_STATE, PART_POWER, PART_SOURCE)
+PART_PLAY = "play"
+MEDIA_PARTS = (PART_PLAYING, PART_VOLUME, PART_MUTE, PART_STATE, PART_POWER, PART_SOURCE, PART_PLAY)
 CLIMATE = "climate"
 PART_CURRENT = "current"
 PART_TARGET = "target"
@@ -75,6 +76,7 @@ MP_VOLUME_SET = 4
 MP_VOLUME_MUTE = 8
 MP_TURN_ON = 128
 MP_TURN_OFF = 256
+MP_PLAY_MEDIA = 512
 MP_SELECT_SOURCE = 2048
 MP_PLAY = 16384
 _PART_FEATURES = {
@@ -83,21 +85,24 @@ _PART_FEATURES = {
     PART_MUTE: MP_VOLUME_MUTE,
     PART_POWER: MP_TURN_ON | MP_TURN_OFF,
     PART_SOURCE: MP_SELECT_SOURCE,
+    PART_PLAY: MP_PLAY_MEDIA,
 }
 MEDIA_OFF_STATES = {"off", "standby"}
 MSG_MAX = 200  # track text in msg
 META_SOURCE_LIST = "ha.source_list"  # JSON list of a player's inputs, so IoT Open users know what to send
 SOURCE_LIST_MAX = 1000
+# a file name sent to the play function is looked up in Home Assistant's media folder ("My media")
+LOCAL_MEDIA = "media-source://media_source/local/"
 
 # function name = "<entity name> <part name>"; IoT Open is master for the name once it is created
 _PART_NAMES = {
     "en": {
         PART_PLAYING: "Playback", PART_VOLUME: "Volume", PART_MUTE: "Mute", PART_STATE: "Status",
-        PART_POWER: "Power", PART_SOURCE: "Source",
+        PART_POWER: "Power", PART_SOURCE: "Source", PART_PLAY: "Play",
     },
     "sv": {
         PART_PLAYING: "Uppspelning", PART_VOLUME: "Volym", PART_MUTE: "Mute", PART_STATE: "Status",
-        PART_POWER: "På/av", PART_SOURCE: "Källa",
+        PART_POWER: "På/av", PART_SOURCE: "Källa", PART_PLAY: "Spela upp",
     },
 }
 _CLIMATE_NAMES = {
@@ -461,7 +466,7 @@ def _media_spec(
     if part == PART_VOLUME:
         type_ = "dimmer"
         meta.update(min="0", max="100", unit="%")
-    elif part == PART_STATE:
+    elif part in (PART_STATE, PART_PLAY):
         type_ = "text"
     elif part == PART_SOURCE:
         type_ = "text"
@@ -573,7 +578,32 @@ def media_value(part: str, state: str | None, attributes: dict[str, Any]) -> tup
     if part == PART_SOURCE:
         source = str(attributes.get("source") or "").strip()
         return (_shorten(source, 255), "") if source else None
+    if part == PART_PLAY:
+        # what is playing, as it would be sent (a file in "My media" by its name); empty when nothing is
+        if raw not in ("playing", "paused"):
+            return "", ""
+        playing = str(attributes.get("media_content_id") or attributes.get("media_title") or "").strip()
+        if playing.startswith(LOCAL_MEDIA):
+            playing = playing[len(LOCAL_MEDIA) :]
+        return _shorten(playing, 255), ""
     return None
+
+
+def play_media_id(value: Any) -> str | None:
+    """What to play: a file in Home Assistant's media folder, a ``media-source://`` id or an http(s) URL.
+
+    ``dorrklocka.mp3`` and ``larm/brand.mp3`` are files in "My media". Paths that climb out of the media folder
+    (``..``) are refused.
+    """
+    text = str(value).strip() if value is not None else ""
+    if not text:
+        return None
+    if text.startswith(("media-source://", "http://", "https://")):
+        return text
+    path = text.replace("\\", "/").lstrip("/")
+    if not path or ".." in path.split("/"):
+        return None
+    return LOCAL_MEDIA + path
 
 
 def media_command(part: str, value: Any) -> tuple[str, str, dict[str, Any]] | None:
@@ -587,6 +617,11 @@ def media_command(part: str, value: Any) -> tuple[str, str, dict[str, Any]] | No
     if part == PART_SOURCE:
         source = str(value).strip() if value is not None else ""
         return (MEDIA_PLAYER, "select_source", {"source": source}) if source else None
+    if part == PART_PLAY:
+        media_id = play_media_id(value)
+        if media_id is None:
+            return None
+        return MEDIA_PLAYER, "play_media", {"media_content_id": media_id, "media_content_type": "music"}
     on = _truthy(value)
     if on is None:
         return None

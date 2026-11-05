@@ -154,11 +154,12 @@ with `obj/ha/media_player/<object_id>`, and each function carries `ha.part`:
 | *&lt;name&gt; Status* | text, read only (`playing`, `paused`, `idle`, `off`, `unavailable`, …) | `…/state` | - |
 | *&lt;name&gt; Power* | `switch` | `…/power` | `turn_on` / `turn_off` |
 | *&lt;name&gt; Source* | text: the current input | `…/source` | `select_source`: send the input's name, e.g. `{"value": "TV"}` |
+| *&lt;name&gt; Play* | text: what is playing (empty when nothing is) | `…/play` | `play_media`: send a file name, e.g. `{"value": "doorbell.mp3"}` |
 
 - Only the functions the player supports are created; *Status* is always there. If the player loses a feature, the
   function is removed. An unavailable player keeps its functions.
 - The names are in Swedish when Home Assistant's language is Swedish (*Uppspelning*, *Volym*, *Mute*, *Status*,
-  *På/av*, *Källa*). As for other functions, a name changed in IoT Open is kept.
+  *På/av*, *Källa*, *Spela upp*). As for other functions, a name changed in IoT Open is kept.
 - **The track is in `msg`.** *Playback* sends `msg` = `Artist - Title` (only the title when there is no artist, the
   station for radio without a title), shortened to 200 characters. A new track while playing gives a new message
   with the same value, so the IoT Open log shows what was played. On pause the text stays; when the player is idle or
@@ -169,6 +170,13 @@ with `obj/ha/media_player/<object_id>`, and each function carries `ha.part`:
 - `topic_write` is only set when *Allow IoT Open to control Home Assistant* is on.
 - *Source* carries the player's inputs in the metadata key `ha.source_list` (a JSON list, e.g. `["TV", "CD"]`), so
   you can see what to send. It is updated when the mirror syncs (start-up, label or registry changes).
+
+**Playing sound files.** *Play* is created for players that support `play_media` (for example *VLC media player
+via Telnet* or *MPD*). Put the sound files in Home Assistant's media folder (*Media → My media*, the `/media` folder
+of a Home Assistant container) and send the file name, with sub-folders if you use them (`larm/brand.mp3`), to
+`set/…/play`. One function covers any number of files, so an Edge App can pick the sound at run time. A
+`media-source://` id (for example text-to-speech) or an `http(s)://` URL also works. Paths that climb out of the
+media folder (`..`) are ignored. Set the volume first with *Volume* if needed.
 
 ### Buttons and scenes
 

@@ -661,3 +661,43 @@ async def test_button_press_is_sent_once(
     mqtt.reconnect()  # a reconnect republishes states, but not presses
     await hass.async_block_till_done(wait_background_tasks=True)
     assert len([p for t, p in mqtt.published if t == topic]) == 1
+
+
+async def test_media_player_play_file(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    lynx: LynxData,
+) -> None:
+    _player(hass, _label(hass), FEATURES | 512)
+    hass.states.async_set(PLAYER, "idle", {**PLAYING, "supported_features": FEATURES | 512})
+    mqtt = await _setup(hass, config_entry, mock_mqtt)
+    assert "play" in _own_functions(lynx)
+    assert _published(mqtt, "play")[-1]["value"] == ""
+
+    calls = async_mock_service(hass, "media_player", "play_media")
+    topic = f"{CLIENT_ID}/set/obj/ha/media_player/living_room/play"
+    mqtt.push(topic, {"value": "larm/brand.mp3"})
+    mqtt.push(topic, {"value": "../configuration.yaml"})  # outside the media folder: ignored
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert [c.data for c in calls] == [
+        {
+            "entity_id": PLAYER,
+            "media_content_id": "media-source://media_source/local/larm/brand.mp3",
+            "media_content_type": "music",
+        }
+    ]
+
+    # the player confirms: the play function shows what is playing
+    hass.states.async_set(
+        PLAYER,
+        "playing",
+        {
+            **PLAYING,
+            "supported_features": FEATURES | 512,
+            "media_content_id": "media-source://media_source/local/larm/brand.mp3",
+        },
+    )
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert _published(mqtt, "play")[-1]["value"] == "larm/brand.mp3"

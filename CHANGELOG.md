@@ -9,6 +9,9 @@ All notable changes to this project are documented here. The format follows
 
 - Media players with input selection get a *Source* function (*Källa* in Swedish): the current input as text, and
   `select_source` when an input name is sent to it. The inputs are listed in the metadata key `ha.source_list`.
+- Media players that can play media get a *Play* function (*Spela upp* in Swedish). Send a file name from Home
+  Assistant's media folder, for example `{"value": "doorbell.mp3"}`, and the player plays it, so many sounds need
+  neither one script each nor any change in Home Assistant. `media-source://` ids and http(s) URLs also work.
 - Buttons and scenes publish value `1` when pressed or activated, with the time in `msg`, instead of the press
   time as a text value. A restart or reconnect no longer looks like a press.
 
