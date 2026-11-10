@@ -132,7 +132,7 @@ label put directly on an entity is always mirrored, whatever its category.
 
 | Home Assistant | IoT Open |
 |---|---|
-| Device | Device (type `HomeAssistant`, metadata `name`, `manufacturer`, `model`, `ha.device_id`) |
+| Device | Device (type `HomeAssistant`, or `audio` when it has a media player with *Play*; metadata `name`, `manufacturer`, `model`, `ha.device_id`) |
 | Entity | Function, `topic_read` = `obj/ha/<domain>/<object_id>` |
 | Controllable entity | also `topic_write` = `set/obj/ha/<domain>/<object_id>` |
 | State change | `{"value", "timestamp", "msg"}` published to `<client_id>/obj/ha/…` |
@@ -178,6 +178,12 @@ of a Home Assistant container) and send the file name, with sub-folders if you u
 `set/…/play`. One function covers any number of files, so an Edge App can pick the sound at run time. A
 `media-source://` id (for example text-to-speech) or an `http(s)://` URL also works. Paths that climb out of the
 media folder (`..`) are ignored. Set the volume first with *Volume* if needed.
+
+**Finding the speakers.** A device whose media player has *Play* gets the IoT Open device type `audio` (other
+mirrored devices are `HomeAssistant`). An Edge App can then tell whether an installation can play sounds, and find
+where to send them, without any setting: look for devices of type `audio` and take the function with
+`ha.part = play`. If the player loses *Play*, the device goes back to `HomeAssistant`. A device type changed by hand
+in IoT Open is left alone.
 
 **Which files there are.** *Play* carries the audio files in the media folder (MP3, WAV, OGG, FLAC, M4A …) in the
 metadata key `ha.media_list`, a JSON list such as `["iotopen/doorbell.mp3", "larm/brand.mp3"]`, so an Edge App or a

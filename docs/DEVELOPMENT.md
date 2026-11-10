@@ -74,7 +74,7 @@ This follows the same pattern as IoT Open's own web dashboards:
   diagnostic and configuration entities of labelled devices* is on, its diagnostic and config entities. They are
   left out by default because many devices have lots of them (a phone's battery, charger and network sensors, a
   speaker's tone settings). A label directly on an entity always counts.
-- HA device → IoT Open device (type `HomeAssistant`, metadata `name`, `manufacturer`, `model`, `ha.device_id`,
+- HA device → IoT Open device (type `HomeAssistant`, `audio` when one of its entities got a *Play* function (decided after the functions, so a new speaker is created and then updated once; only these two types are ever changed), metadata `name`, `manufacturer`, `model`, `ha.device_id`,
   `ha.source`, `ha.source_id`).
 - HA entity → function with `topic_read=obj/ha/<domain>/<object_id>`. Controllable entities also get
   `topic_write=set/obj/ha/<domain>/<object_id>`. Metadata includes `state_*`/`text_*` for the type, `unit`,

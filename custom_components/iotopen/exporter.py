@@ -49,6 +49,7 @@ from .export_mapping import (
     META_HA_DEVICE_ID,
     META_PART,
     ONOFF_SUFFIX,
+    PART_PLAY,
     PART_VOLUME,
     PRESS_DOMAINS,
     FunctionSpec,
@@ -99,6 +100,8 @@ LABEL_ICON = "iotopen:badge"  # served by frontend/iotopen-icons.js
 LABEL_COLOR = "indigo"  # closest HA palette colour to IoT Open's #0d3e53
 LABEL_DESCRIPTION = "Speglas till IoT Open / Mirrored to IoT Open"
 DEVICE_TYPE = "HomeAssistant"
+# a device whose media player has a Play function: Edge Apps find the installation's speakers by this type
+DEVICE_TYPE_AUDIO = "audio"
 ISSUE_EXPORT_FORBIDDEN = "export_forbidden"
 RETRY_DELAY = 60.0
 LOCAL_COMMAND_TOPIC = "set/obj/ha/#"  # bare: the edge client's broker has no client id prefix
@@ -435,6 +438,7 @@ class IoTOpenExporter:
         # ---- devices
         needed_devices = {e.device_id for e in wanted.values() if e is not None and e.device_id}
         device_map: dict[str, int] = {}
+        device_objs: dict[int, Device] = {}
         for ha_device_id in needed_devices:
             ha_device = dev_reg.async_get(ha_device_id)
             if ha_device is None:
@@ -456,9 +460,11 @@ class IoTOpenExporter:
                 if meta_differs(keep.meta, wanted_dev):
                     keep = await client.update_device(keep, meta={**keep.meta, **wanted_dev})
                 device_map[ha_device_id] = keep.id
+                device_objs[keep.id] = keep
             else:
                 created = await client.create_device(iid, DEVICE_TYPE, meta)
                 device_map[ha_device_id] = created.id
+                device_objs[created.id] = created
                 _LOGGER.info("IoT Open: created device %s for %s", created.id, meta["name"])
 
         # ---- functions
@@ -493,6 +499,18 @@ class IoTOpenExporter:
             for spec in specs:
                 await self._sync_function(own_fns.pop((entity_id, spec.part), []), spec)
             exported[entity_id] = specs
+
+        # ---- device type: "audio" for a device with a Play function. A type set by hand in IoT Open is left alone.
+        audio_devices = {
+            device_map.get(wanted[eid].device_id)
+            for eid, specs in exported.items()
+            if any(s.part == PART_PLAY for s in specs) and wanted.get(eid) is not None and wanted[eid].device_id
+        }
+        for dev_id, dev in device_objs.items():
+            want_type = DEVICE_TYPE_AUDIO if dev_id in audio_devices else DEVICE_TYPE
+            if dev.type in (DEVICE_TYPE, DEVICE_TYPE_AUDIO) and dev.type != want_type:
+                await client.update_device(dev, type_=want_type)
+                _LOGGER.info("IoT Open: device %s is now of type %s", dev_id, want_type)
 
         # ---- remove what is no longer labelled (or no longer supported by a media player)
         for (entity_id, part), fns in own_fns.items():
