@@ -828,3 +828,83 @@ async def test_sound_files_sync_again_after_reconnect(
     await _later(hass, 10)
     assert export_client.files.await_count == calls + 1
     assert (tmp_path / "iotopen" / "new.mp3").read_bytes() == content
+
+
+def _player_on_device(hass: HomeAssistant, label_id: str, features: int) -> str:
+    """A labelled player that belongs to a Home Assistant device; returns the device id."""
+    other = MockConfigEntry(domain="sonos")
+    other.add_to_hass(hass)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=other.entry_id, identifiers={("sonos", "speaker")}, name="Speaker"
+    )
+    ent_reg = er.async_get(hass)
+    entry = ent_reg.async_get_or_create(
+        "media_player",
+        "sonos",
+        "player-1",
+        suggested_object_id="living_room",
+        supported_features=features,
+        device_id=device.id,
+    )
+    ent_reg.async_update_entity(entry.entity_id, labels={label_id})
+    return device.id
+
+
+def _own_device(lynx: LynxData) -> dict[str, Any]:
+    (device,) = [d for d in lynx.devices[IID] if d["meta"].get("ha.device_id")]
+    return device
+
+
+async def test_device_with_play_function_is_of_type_audio(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    lynx: LynxData,
+) -> None:
+    _player_on_device(hass, _label(hass), FEATURES | 512)
+    hass.states.async_set(PLAYER, "idle", {**PLAYING, "supported_features": FEATURES | 512})
+    await _setup(hass, config_entry, mock_mqtt)
+
+    assert "play" in _own_functions(lynx)
+    assert _own_device(lynx)["type"] == "audio"
+
+    # the player can no longer play media: no Play function, back to the ordinary type
+    er.async_get(hass).async_update_entity(PLAYER, supported_features=FEATURES)
+    hass.states.async_set(PLAYER, "idle", {**PLAYING, "supported_features": FEATURES})
+    hub = config_entry.runtime_data
+    hub.exporter.schedule_reconcile(0)
+    await _later(hass, 1)
+    assert "play" not in _own_functions(lynx)
+    assert _own_device(lynx)["type"] == "HomeAssistant"
+
+
+async def test_device_without_play_function_keeps_its_type(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    lynx: LynxData,
+) -> None:
+    _player_on_device(hass, _label(hass), FEATURES)
+    hass.states.async_set(PLAYER, "playing", PLAYING)
+    await _setup(hass, config_entry, mock_mqtt)
+    assert _own_device(lynx)["type"] == "HomeAssistant"
+    assert not any(c.kwargs.get("type_") for c in export_client.update_device.call_args_list)
+
+
+async def test_device_type_set_in_iot_open_is_kept(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    export_client: MagicMock,
+    mock_mqtt: type[FakeMqtt],
+    lynx: LynxData,
+) -> None:
+    _player_on_device(hass, _label(hass), FEATURES | 512)
+    hass.states.async_set(PLAYER, "idle", {**PLAYING, "supported_features": FEATURES | 512})
+    await _setup(hass, config_entry, mock_mqtt)
+
+    _own_device(lynx)["type"] = "speaker"  # changed by hand in IoT Open
+    config_entry.runtime_data.exporter.schedule_reconcile(0)
+    await _later(hass, 1)
+    assert _own_device(lynx)["type"] == "speaker"

@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+## 0.9.0
+
+### Mirroring (Home Assistant → IoT Open)
+
+- A device whose media player has a *Play* function (*Spela upp*) gets the IoT Open device type `audio` instead of
+  `HomeAssistant`. Edge Apps can then tell whether an installation can play sounds, and find the speaker to send
+  them to, without any setting of their own. If the player loses *Play*, the device goes back to `HomeAssistant`.
+  A device type changed by hand in IoT Open is left alone.
+
 ## 0.8.0
 
 ### Mirroring (Home Assistant → IoT Open)
